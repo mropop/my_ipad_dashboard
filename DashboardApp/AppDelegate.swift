@@ -1,6 +1,5 @@
 import UIKit
 import WebKit
-import UniformTypeIdentifiers
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -14,11 +13,202 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 }
 
-class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumentPickerDelegate {
+// MARK: - File Browser ViewController
+class FileBrowserViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
+
+    var currentPath: String = "/var/mobile"
+    var items: [String] = []
+    var onFilePicked: ((String) -> Void)?
+    var tableView: UITableView!
+    var pathLabel: UILabel!
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor(red: 0.05, green: 0.08, blue: 0.12, alpha: 1)
+
+        // Navigation bar
+        let navBar = UIView()
+        navBar.backgroundColor = UIColor(red: 0.06, green: 0.1, blue: 0.16, alpha: 1)
+        navBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(navBar)
+
+        let titleLbl = UILabel()
+        titleLbl.text = "Pick HTML File"
+        titleLbl.textColor = UIColor(red: 0, green: 1, blue: 0.78, alpha: 1)
+        titleLbl.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .bold)
+        titleLbl.translatesAutoresizingMaskIntoConstraints = false
+        navBar.addSubview(titleLbl)
+
+        let cancelBtn = UIButton(type: .system)
+        cancelBtn.setTitle("Cancel", for: .normal)
+        cancelBtn.setTitleColor(UIColor(red: 1, green: 0.4, blue: 0.4, alpha: 1), for: .normal)
+        cancelBtn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+        cancelBtn.addTarget(self, action: #selector(cancel), for: .touchUpInside)
+        cancelBtn.translatesAutoresizingMaskIntoConstraints = false
+        navBar.addSubview(cancelBtn)
+
+        pathLabel = UILabel()
+        pathLabel.text = currentPath
+        pathLabel.textColor = UIColor(white: 1, alpha: 0.35)
+        pathLabel.font = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        pathLabel.numberOfLines = 2
+        pathLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(pathLabel)
+
+        tableView = UITableView()
+        tableView.backgroundColor = .clear
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.separatorColor = UIColor(white: 1, alpha: 0.06)
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+
+        // Common locations shortcuts
+        let shortcutBar = UIScrollView()
+        shortcutBar.backgroundColor = UIColor(red: 0.06, green: 0.1, blue: 0.16, alpha: 1)
+        shortcutBar.showsHorizontalScrollIndicator = false
+        shortcutBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(shortcutBar)
+
+        let shortcuts: [(String, String)] = [
+            ("Downloads", "/var/mobile/Downloads"),
+            ("Documents", "/var/mobile/Documents"),
+            ("On My iPad", "/private/var/mobile/Containers/Shared/AppGroup"),
+            ("Root", "/"),
+            ("Home", "/var/mobile"),
+        ]
+
+        var xOffset: CGFloat = 8
+        for (name, path) in shortcuts {
+            let btn = UIButton(type: .system)
+            btn.setTitle(name, for: .normal)
+            btn.setTitleColor(UIColor(red: 0, green: 0.8, blue: 1, alpha: 1), for: .normal)
+            btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+            btn.backgroundColor = UIColor(red: 0, green: 0.8, blue: 1, alpha: 0.1)
+            btn.layer.cornerRadius = 6
+            btn.layer.borderWidth = 1
+            btn.layer.borderColor = UIColor(red: 0, green: 0.8, blue: 1, alpha: 0.25).cgColor
+            btn.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+            btn.sizeToFit()
+            btn.frame = CGRect(x: xOffset, y: 6, width: btn.frame.width + 20, height: 28)
+            let targetPath = path
+            btn.addTarget(self, action: #selector(shortcutTapped(_:)), for: .touchUpInside)
+            btn.accessibilityLabel = targetPath
+            shortcutBar.addSubview(btn)
+            xOffset += btn.frame.width + 8
+        }
+        shortcutBar.contentSize = CGSize(width: xOffset, height: 40)
+
+        NSLayoutConstraint.activate([
+            navBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            navBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            navBar.heightAnchor.constraint(equalToConstant: 48),
+            titleLbl.centerXAnchor.constraint(equalTo: navBar.centerXAnchor),
+            titleLbl.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
+            cancelBtn.trailingAnchor.constraint(equalTo: navBar.trailingAnchor, constant: -16),
+            cancelBtn.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
+            shortcutBar.topAnchor.constraint(equalTo: navBar.bottomAnchor),
+            shortcutBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            shortcutBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            shortcutBar.heightAnchor.constraint(equalToConstant: 40),
+            pathLabel.topAnchor.constraint(equalTo: shortcutBar.bottomAnchor, constant: 4),
+            pathLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            pathLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            pathLabel.heightAnchor.constraint(equalToConstant: 28),
+            tableView.topAnchor.constraint(equalTo: pathLabel.bottomAnchor, constant: 4),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        loadDirectory(currentPath)
+    }
+
+    @objc func shortcutTapped(_ sender: UIButton) {
+        if let path = sender.accessibilityLabel {
+            loadDirectory(path)
+        }
+    }
+
+    func loadDirectory(_ path: String) {
+        currentPath = path
+        pathLabel?.text = path
+        let fm = FileManager.default
+        do {
+            let allItems = try fm.contentsOfDirectory(atPath: path)
+            // Show folders first, then .html and .txt files only
+            var folders: [String] = []
+            var htmlFiles: [String] = []
+            for item in allItems.sorted() {
+                if item.hasPrefix(".") { continue }
+                var isDir: ObjCBool = false
+                let fullPath = (path as NSString).appendingPathComponent(item)
+                fm.fileExists(atPath: fullPath, isDirectory: &isDir)
+                if isDir.boolValue {
+                    folders.append(item + "/")
+                } else if item.hasSuffix(".html") || item.hasSuffix(".htm") || item.hasSuffix(".txt") {
+                    htmlFiles.append(item)
+                }
+            }
+            items = [".."] + folders + htmlFiles
+        } catch {
+            items = [".."]
+        }
+        tableView?.reloadData()
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return items.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
+        cell.backgroundColor = .clear
+        cell.textLabel?.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let item = items[indexPath.row]
+        cell.textLabel?.text = item
+        if item == ".." {
+            cell.textLabel?.textColor = UIColor(red: 1, green: 0.6, blue: 0.2, alpha: 0.8)
+            cell.textLabel?.text = ".. (go back)"
+        } else if item.hasSuffix("/") {
+            cell.textLabel?.textColor = UIColor(red: 0, green: 0.8, blue: 1, alpha: 0.9)
+        } else {
+            cell.textLabel?.textColor = UIColor(red: 0, green: 1, blue: 0.78, alpha: 1)
+        }
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        let item = items[indexPath.row]
+        if item == ".." {
+            let parent = (currentPath as NSString).deletingLastPathComponent
+            loadDirectory(parent.isEmpty ? "/" : parent)
+        } else if item.hasSuffix("/") {
+            let folderName = String(item.dropLast())
+            let newPath = (currentPath as NSString).appendingPathComponent(folderName)
+            loadDirectory(newPath)
+        } else {
+            // It's a file — read and return it
+            let filePath = (currentPath as NSString).appendingPathComponent(item)
+            onFilePicked?(filePath)
+            dismiss(animated: true)
+        }
+    }
+
+    @objc func cancel() {
+        dismiss(animated: true)
+    }
+}
+
+// MARK: - Main Dashboard ViewController
+class DashboardViewController: UIViewController, WKNavigationDelegate {
 
     var webView: WKWebView!
-    var floatBtn: UIButton!       // always-visible small button
-    var toolbar: UIView!          // expanded toolbar
+    var floatBtn: UIButton!
+    var toolbar: UIView!
     var isToolbarVisible = false
     let htmlKey = "saved_dashboard_html"
 
@@ -31,7 +221,6 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
         loadSavedHTML()
     }
 
-    // MARK: - WebView (fills entire screen)
     func setupWebView() {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
@@ -45,52 +234,51 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
         view.addSubview(webView)
     }
 
-    // MARK: - Small floating button (always on top, top-right corner)
     func setupFloatButton() {
         floatBtn = UIButton(type: .system)
-        floatBtn.setTitle("☰", for: .normal)
-        floatBtn.titleLabel?.font = UIFont.systemFont(ofSize: 20)
-        floatBtn.setTitleColor(UIColor(red: 0, green: 1, blue: 0.78, alpha: 0.6), for: .normal)
-        floatBtn.backgroundColor = UIColor(white: 0, alpha: 0.4)
-        floatBtn.layer.cornerRadius = 18
+        floatBtn.setTitle("MENU", for: .normal)
+        floatBtn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
+        floatBtn.setTitleColor(UIColor(red: 0, green: 1, blue: 0.78, alpha: 0.8), for: .normal)
+        floatBtn.backgroundColor = UIColor(white: 0, alpha: 0.6)
+        floatBtn.layer.cornerRadius = 8
         floatBtn.layer.borderWidth = 1
-        floatBtn.layer.borderColor = UIColor(red: 0, green: 1, blue: 0.78, alpha: 0.25).cgColor
+        floatBtn.layer.borderColor = UIColor(red: 0, green: 1, blue: 0.78, alpha: 0.3).cgColor
         floatBtn.translatesAutoresizingMaskIntoConstraints = false
         floatBtn.addTarget(self, action: #selector(toggleToolbar), for: .touchUpInside)
+        floatBtn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
         view.addSubview(floatBtn)
-
         NSLayoutConstraint.activate([
-            floatBtn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            floatBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            floatBtn.widthAnchor.constraint(equalToConstant: 36),
-            floatBtn.heightAnchor.constraint(equalToConstant: 36),
+            floatBtn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            floatBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
         ])
     }
 
-    // MARK: - Expanded toolbar (appears below float button)
     func setupToolbar() {
         toolbar = UIView()
-        toolbar.backgroundColor = UIColor(red: 0.05, green: 0.08, blue: 0.12, alpha: 0.97)
+        toolbar.backgroundColor = UIColor(red: 0.05, green: 0.08, blue: 0.12, alpha: 0.98)
         toolbar.layer.cornerRadius = 14
         toolbar.layer.borderWidth = 1
         toolbar.layer.borderColor = UIColor(red: 0, green: 1, blue: 0.78, alpha: 0.35).cgColor
         toolbar.layer.shadowColor = UIColor.black.cgColor
-        toolbar.layer.shadowOpacity = 0.6
-        toolbar.layer.shadowRadius = 12
+        toolbar.layer.shadowOpacity = 0.7
+        toolbar.layer.shadowRadius = 14
         toolbar.isHidden = true
         toolbar.alpha = 0
         view.addSubview(toolbar)
 
-        let importBtn = makeToolbarButton(title: "📂  Import HTML", color: UIColor(red: 0, green: 1, blue: 0.78, alpha: 1))
-        importBtn.addTarget(self, action: #selector(importHTML), for: .touchUpInside)
+        let browseBtn = makeBtn(title: "Browse Files", color: UIColor(red: 0, green: 1, blue: 0.78, alpha: 1))
+        browseBtn.addTarget(self, action: #selector(browseFiles), for: .touchUpInside)
 
-        let defaultBtn = makeToolbarButton(title: "↺  Load Default", color: UIColor(red: 0.4, green: 0.7, blue: 1.0, alpha: 1))
+        let pasteBtn = makeBtn(title: "Paste from Clipboard", color: UIColor(red: 0.4, green: 0.8, blue: 1.0, alpha: 1))
+        pasteBtn.addTarget(self, action: #selector(pasteHTML), for: .touchUpInside)
+
+        let defaultBtn = makeBtn(title: "Load Default", color: UIColor(red: 0.6, green: 0.6, blue: 0.7, alpha: 1))
         defaultBtn.addTarget(self, action: #selector(loadDefault), for: .touchUpInside)
 
-        let closeBtn = makeToolbarButton(title: "✕  Close", color: UIColor(red: 1, green: 0.4, blue: 0.4, alpha: 1))
+        let closeBtn = makeBtn(title: "Close", color: UIColor(red: 1, green: 0.4, blue: 0.4, alpha: 1))
         closeBtn.addTarget(self, action: #selector(toggleToolbar), for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [importBtn, defaultBtn, closeBtn])
+        let stack = UIStackView(arrangedSubviews: [browseBtn, pasteBtn, defaultBtn, closeBtn])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -99,88 +287,77 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: floatBtn.bottomAnchor, constant: 8),
-            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            toolbar.widthAnchor.constraint(equalToConstant: 200),
-            stack.topAnchor.constraint(equalTo: toolbar.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: -12),
+            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            toolbar.widthAnchor.constraint(equalToConstant: 220),
+            stack.topAnchor.constraint(equalTo: toolbar.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: -14),
             stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 12),
             stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -12),
         ])
     }
 
-    func makeToolbarButton(title: String, color: UIColor) -> UIButton {
+    func makeBtn(title: String, color: UIColor) -> UIButton {
         let btn = UIButton(type: .system)
         btn.setTitle(title, for: .normal)
         btn.setTitleColor(color, for: .normal)
         btn.contentHorizontalAlignment = .left
-        btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-        btn.backgroundColor = color.withAlphaComponent(0.1)
+        btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        btn.backgroundColor = color.withAlphaComponent(0.08)
         btn.layer.cornerRadius = 8
         btn.layer.borderWidth = 1
-        btn.layer.borderColor = color.withAlphaComponent(0.3).cgColor
+        btn.layer.borderColor = color.withAlphaComponent(0.25).cgColor
         btn.contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         return btn
     }
 
-    // MARK: - Toggle toolbar
     @objc func toggleToolbar() {
         if isToolbarVisible {
-            UIView.animate(withDuration: 0.2, animations: {
-                self.toolbar.alpha = 0
-            }) { _ in
-                self.toolbar.isHidden = true
-            }
+            UIView.animate(withDuration: 0.2, animations: { self.toolbar.alpha = 0 }) { _ in self.toolbar.isHidden = true }
         } else {
             toolbar.isHidden = false
-            UIView.animate(withDuration: 0.2) {
-                self.toolbar.alpha = 1
-            }
+            UIView.animate(withDuration: 0.2) { self.toolbar.alpha = 1 }
         }
         isToolbarVisible = !isToolbarVisible
     }
 
-    // MARK: - Import HTML
-    @objc func importHTML() {
+    // MARK: - Browse files (jailbreak file system)
+    @objc func browseFiles() {
         toggleToolbar()
-        let picker: UIDocumentPickerViewController
-        if #available(iOS 14.0, *) {
-            // Accept html, text, and public.data so .html files are always selectable
-            picker = UIDocumentPickerViewController(forOpeningContentTypes: [
-                UTType.html,
-                UTType.text,
-                UTType.plainText,
-                UTType.data
-            ])
-        } else {
-            picker = UIDocumentPickerViewController(documentTypes: [
-                "public.html",
-                "public.text",
-                "public.plain-text",
-                "public.data"
-            ], in: .import)
+        let browser = FileBrowserViewController()
+        browser.modalPresentationStyle = .pageSheet
+        browser.onFilePicked = { [weak self] filePath in
+            guard let self = self else { return }
+            do {
+                let html = try String(contentsOfFile: filePath, encoding: .utf8)
+                UserDefaults.standard.set(html, forKey: self.htmlKey)
+                self.webView.loadHTMLString(html, baseURL: nil)
+                self.showToast(message: "Loaded: " + (filePath as NSString).lastPathComponent)
+            } catch {
+                self.showToast(message: "Cannot read file")
+            }
         }
-        picker.delegate = self
-        picker.allowsMultipleSelection = false
-        present(picker, animated: true)
+        present(browser, animated: true)
     }
 
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        guard let url = urls.first else { return }
-        do {
-            let html = try String(contentsOf: url, encoding: .utf8)
+    // MARK: - Paste from clipboard
+    @objc func pasteHTML() {
+        toggleToolbar()
+        let pb = UIPasteboard.general
+        var html: String? = nil
+        if pb.contains(pasteboardTypes: ["public.html"]) {
+            if let data = pb.data(forPasteboardType: "public.html"),
+               let str = String(data: data, encoding: .utf8) { html = str }
+        }
+        if html == nil && pb.hasStrings { html = pb.string }
+        if let html = html, html.contains("<") {
             UserDefaults.standard.set(html, forKey: htmlKey)
             webView.loadHTMLString(html, baseURL: nil)
-            showToast(message: "✅  HTML imported!")
-        } catch {
-            showToast(message: "❌  Failed to read file")
+            showToast(message: "HTML loaded from clipboard!")
+        } else {
+            showToast(message: "No HTML in clipboard!")
         }
     }
 
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        // do nothing
-    }
-
-    // MARK: - Load HTML
     func loadSavedHTML() {
         if let saved = UserDefaults.standard.string(forKey: htmlKey) {
             webView.loadHTMLString(saved, baseURL: nil)
@@ -193,16 +370,15 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
         toggleToolbar()
         UserDefaults.standard.removeObject(forKey: htmlKey)
         webView.loadHTMLString(buildDefaultHTML(), baseURL: nil)
-        showToast(message: "↺  Default loaded")
+        showToast(message: "Default loaded")
     }
 
-    // MARK: - Toast
     func showToast(message: String) {
         let toast = UILabel()
         toast.text = "  " + message + "  "
         toast.textColor = .white
         toast.backgroundColor = UIColor(red: 0.05, green: 0.08, blue: 0.12, alpha: 0.97)
-        toast.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+        toast.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .medium)
         toast.textAlignment = .center
         toast.layer.cornerRadius = 10
         toast.layer.borderWidth = 1
@@ -217,16 +393,13 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
             toast.heightAnchor.constraint(equalToConstant: 38),
         ])
         UIView.animate(withDuration: 0.25, animations: { toast.alpha = 1 }) { _ in
-            UIView.animate(withDuration: 0.3, delay: 2.2, animations: { toast.alpha = 0 }) { _ in
-                toast.removeFromSuperview()
-            }
+            UIView.animate(withDuration: 0.3, delay: 2.5, animations: { toast.alpha = 0 }) { _ in toast.removeFromSuperview() }
         }
     }
 
     override var prefersStatusBarHidden: Bool { return true }
     override var prefersHomeIndicatorAutoHidden: Bool { return true }
 
-    // MARK: - Default HTML
     func buildDefaultHTML() -> String {
         var h = ""
         h += "<!DOCTYPE html><html lang='en'><head>"
@@ -240,7 +413,6 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
         h += "font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;overflow:hidden;-webkit-user-select:none}"
         h += "body{background-image:radial-gradient(ellipse at 15% 50%,rgba(0,255,200,0.07) 0%,transparent 55%),"
         h += "radial-gradient(ellipse at 85% 15%,rgba(0,170,255,0.07) 0%,transparent 55%)}"
-        h += "body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.06) 3px,rgba(0,0,0,0.06) 4px);pointer-events:none;z-index:999}"
         h += ".grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr;gap:12px;padding:14px;height:100vh;width:100vw}"
         h += ".clock-panel{grid-column:1;grid-row:1;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px 22px;display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden}"
         h += ".clock-panel::after{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent)}"
@@ -262,7 +434,6 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
         h += ".dc.other{color:rgba(255,255,255,0.14)}"
         h += ".dc.today{background:var(--accent);color:#060a0f;font-weight:700;border-radius:50%;box-shadow:0 0 10px rgba(0,255,200,0.5)}"
         h += ".todo-panel{grid-column:1/3;grid-row:2;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px 18px;display:flex;flex-direction:column;position:relative;overflow:hidden}"
-        h += ".todo-panel::after{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),transparent)}"
         h += ".todo-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}"
         h += ".todo-ttl{font-family:'Courier New',monospace;font-size:12px;font-weight:bold;color:var(--accent);letter-spacing:0.12em;text-transform:uppercase}"
         h += ".todo-rem{font-size:11px;color:var(--muted)}"
