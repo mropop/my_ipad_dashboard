@@ -36,6 +36,8 @@ jobs:
           mkdir -p Payload
           cp -r build/DashboardApp.app Payload/
           zip -r Dashboard.ipa Payload/
+          echo "IPA created successfully!"
+          ls -lh Dashboard.ipa
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
