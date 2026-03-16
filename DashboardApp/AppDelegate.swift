@@ -144,9 +144,20 @@ class DashboardViewController: UIViewController, WKNavigationDelegate, UIDocumen
         toggleToolbar()
         let picker: UIDocumentPickerViewController
         if #available(iOS 14.0, *) {
-            picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.html])
+            // Accept html, text, and public.data so .html files are always selectable
+            picker = UIDocumentPickerViewController(forOpeningContentTypes: [
+                UTType.html,
+                UTType.text,
+                UTType.plainText,
+                UTType.data
+            ])
         } else {
-            picker = UIDocumentPickerViewController(documentTypes: ["public.html"], in: .import)
+            picker = UIDocumentPickerViewController(documentTypes: [
+                "public.html",
+                "public.text",
+                "public.plain-text",
+                "public.data"
+            ], in: .import)
         }
         picker.delegate = self
         picker.allowsMultipleSelection = false
