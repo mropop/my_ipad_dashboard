@@ -16,7 +16,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 // MARK: - File Browser ViewController
 class FileBrowserViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
 
-    var currentPath: String = "/var/mobile"
+    var currentPath: String = "/var/mobile/Documents"
     var items: [String] = []
     var onFilePicked: ((String) -> Void)?
     var tableView: UITableView!
@@ -72,11 +72,11 @@ class FileBrowserViewController: UIViewController, UITableViewDelegate, UITableV
         view.addSubview(shortcutBar)
 
         let shortcuts: [(String, String)] = [
-            ("Downloads", "/var/mobile/Downloads"),
             ("Documents", "/var/mobile/Documents"),
-            ("On My iPad", "/private/var/mobile/Containers/Shared/AppGroup"),
-            ("Root", "/"),
+            ("Downloads", "/var/mobile/Downloads"),
+            ("Desktop", "/var/mobile/Desktop"),
             ("Home", "/var/mobile"),
+            ("Root", "/"),
         ]
 
         var xOffset: CGFloat = 8
@@ -136,25 +136,37 @@ class FileBrowserViewController: UIViewController, UITableViewDelegate, UITableV
         currentPath = path
         pathLabel?.text = path
         let fm = FileManager.default
+
+        // Try the path, if it fails try fallbacks
+        var workingPath = path
+        if !fm.fileExists(atPath: path) {
+            let fallbacks = ["/var/mobile/Documents", "/var/mobile", "/private/var/mobile/Documents", "/"]
+            for fb in fallbacks {
+                if fm.fileExists(atPath: fb) { workingPath = fb; break }
+            }
+        }
+        currentPath = workingPath
+        pathLabel?.text = workingPath
+
         do {
-            let allItems = try fm.contentsOfDirectory(atPath: path)
-            // Show folders first, then .html and .txt files only
+            let allItems = try fm.contentsOfDirectory(atPath: workingPath)
             var folders: [String] = []
             var htmlFiles: [String] = []
             for item in allItems.sorted() {
                 if item.hasPrefix(".") { continue }
                 var isDir: ObjCBool = false
-                let fullPath = (path as NSString).appendingPathComponent(item)
+                let fullPath = (workingPath as NSString).appendingPathComponent(item)
                 fm.fileExists(atPath: fullPath, isDirectory: &isDir)
                 if isDir.boolValue {
                     folders.append(item + "/")
-                } else if item.hasSuffix(".html") || item.hasSuffix(".htm") || item.hasSuffix(".txt") {
+                } else {
+                    // Show ALL files so nothing is hidden
                     htmlFiles.append(item)
                 }
             }
             items = [".."] + folders + htmlFiles
         } catch {
-            items = [".."]
+            items = [".. (error: \(error.localizedDescription))"]
         }
         tableView?.reloadData()
     }
