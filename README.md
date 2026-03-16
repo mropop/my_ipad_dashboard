@@ -10,3 +10,7 @@ Clock + Calendar + To-Do List dashboard for iPad Air 2 (iOS 15).
 4. Download `Dashboard-IPA` from the Artifacts section
 5. Extract the zip → get `Dashboard.ipa`
 6. Install via **TrollStore** on your iPad
+
+
+## Note
+This is just for fun
