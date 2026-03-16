@@ -1,0 +1,45 @@
+name: Build Dashboard IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build app (unsigned)
+        run: |
+          xcodebuild \
+            -project DashboardApp.xcodeproj \
+            -scheme DashboardApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination generic/platform=iOS \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PRODUCT_BUNDLE_IDENTIFIER=com.local.dashboard \
+            clean build \
+            CONFIGURATION_BUILD_DIR=$PWD/build
+
+      - name: Package as IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/DashboardApp.app Payload/
+          zip -r Dashboard.ipa Payload/
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dashboard-IPA
+          path: Dashboard.ipa
+          retention-days: 30
