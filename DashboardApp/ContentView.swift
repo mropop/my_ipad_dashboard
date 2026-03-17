@@ -1,5 +1,6 @@
 import SwiftUI
 import UserNotifications
+import AudioToolbox
 
 // MARK: - Firebase config
 let FIREBASE_URL = "https://my-todo-list-b567a-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -16,100 +17,206 @@ struct Task: Identifiable, Codable, Equatable {
     static func == (a: Task, b: Task) -> Bool { a.id == b.id && a.done == b.done && a.text == b.text && a.alarm == b.alarm }
 }
 
-// MARK: - Firebase Manager
-class FirebaseManager: ObservableObject {
+// MARK: - Firebase Manager with SSE Streaming
+class FirebaseManager: NSObject, ObservableObject, URLSessionDataDelegate {
     @Published var tasks: [Task] = []
     @Published var connected = false
-    private var pollTimer: Timer?
 
-    init() { startPolling() }
+    private var sseTask: URLSessionDataTask?
+    private var session: URLSession?
+    private var buffer = ""
 
-    func startPolling() {
-        fetch()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.fetch()
+    override init() {
+        super.init()
+        startStreaming()
+    }
+
+    func startStreaming() {
+        // Firebase REST SSE — server pushes changes instantly, no polling needed
+        guard let url = URL(string: "\(FIREBASE_URL)/tasks.json?auth=\(FIREBASE_KEY)") else { return }
+        var request = URLRequest(url: url)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = TimeInterval(INT_MAX) // keep connection open forever
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = TimeInterval(INT_MAX)
+        config.timeoutIntervalForResource = TimeInterval(INT_MAX)
+        session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        sseTask = session?.dataTask(with: request)
+        sseTask?.resume()
+    }
+
+    // Called when data arrives from Firebase SSE
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard let text = String(data: data, encoding: .utf8) else { return }
+        buffer += text
+
+        // Process complete SSE events (separated by double newline)
+        let events = buffer.components(separatedBy: "\n\n")
+        buffer = events.last ?? ""
+
+        for event in events.dropLast() {
+            processSSEEvent(event)
         }
     }
 
-    func fetch() {
-        guard let url = URL(string: "\(FIREBASE_URL)/tasks.json?auth=\(FIREBASE_KEY)") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, resp, _ in
-            guard let self = self, let data = data else { return }
-            if let dict = try? JSONDecoder().decode([String: Task].self, from: data) {
-                DispatchQueue.main.async {
-                    self.tasks = dict.values.sorted { $0.created > $1.created }
-                    self.connected = true
-                }
-            } else {
-                DispatchQueue.main.async { self.connected = true }
+    func processSSEEvent(_ raw: String) {
+        var eventType = ""
+        var dataStr = ""
+
+        for line in raw.components(separatedBy: "\n") {
+            if line.hasPrefix("event: ") {
+                eventType = String(line.dropFirst(7))
+            } else if line.hasPrefix("data: ") {
+                dataStr = String(line.dropFirst(6))
             }
-        }.resume()
+        }
+
+        guard !dataStr.isEmpty && dataStr != "null" else {
+            DispatchQueue.main.async { self.connected = true }
+            return
+        }
+
+        // Firebase SSE sends full snapshot on "put" and partial on "patch"
+        if eventType == "put" || eventType == "patch" {
+            if let jsonData = dataStr.data(using: .utf8),
+               let wrapper = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let taskData = wrapper["data"] {
+                if let dict = taskData as? [String: Any] {
+                    parseTasks(dict)
+                } else if taskData is NSNull {
+                    DispatchQueue.main.async {
+                        self.tasks = []
+                        self.connected = true
+                    }
+                }
+            }
+        }
     }
 
+    func parseTasks(_ dict: [String: Any]) {
+        var parsed: [Task] = []
+        for (_, val) in dict {
+            guard let obj = val as? [String: Any],
+                  let id = obj["id"] as? String,
+                  let text = obj["text"] as? String,
+                  let done = obj["done"] as? Bool,
+                  let created = obj["created"] as? String else { continue }
+            let alarm = obj["alarm"] as? String
+            parsed.append(Task(id: id, text: text, done: done, alarm: alarm, created: created))
+        }
+        DispatchQueue.main.async {
+            self.tasks = parsed.sorted { $0.created > $1.created }
+            self.connected = true
+            // Reschedule alarms
+            AlarmManager.shared.rescheduleAll(parsed)
+        }
+    }
+
+    // Reconnect if connection drops
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        DispatchQueue.main.async { self.connected = false }
+        // Reconnect after 3 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.buffer = ""
+            self?.startStreaming()
+        }
+    }
+
+    // MARK: - Write operations (still use REST PUT/DELETE)
     func add(_ task: Task) {
         guard let url = URL(string: "\(FIREBASE_URL)/tasks/\(task.id).json") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONEncoder().encode(task)
-        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.fetch() }
-        }.resume()
+        URLSession.shared.dataTask(with: req).resume()
+        // SSE will auto-push the change back — no need to fetch
     }
 
     func toggle(_ task: Task) {
+        // Optimistic update immediately
+        if let i = tasks.firstIndex(where: { $0.id == task.id }) {
+            tasks[i].done = !task.done
+        }
         guard let url = URL(string: "\(FIREBASE_URL)/tasks/\(task.id)/done.json") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONEncoder().encode(!task.done)
-        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.fetch() }
-        }.resume()
-        // Optimistic update
-        if let i = tasks.firstIndex(where: { $0.id == task.id }) {
-            tasks[i].done = !task.done
-        }
+        URLSession.shared.dataTask(with: req).resume()
     }
 
     func delete(_ task: Task) {
+        // Optimistic update immediately
+        tasks.removeAll { $0.id == task.id }
         guard let url = URL(string: "\(FIREBASE_URL)/tasks/\(task.id).json") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "DELETE"
-        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.fetch() }
-        }.resume()
-        // Optimistic update
-        tasks.removeAll { $0.id == task.id }
+        URLSession.shared.dataTask(with: req).resume()
     }
 }
 
-// MARK: - Notification Manager
-class NotificationManager {
-    static let shared = NotificationManager()
+// MARK: - Alarm Manager (in-app timer — works without entitlements)
+class AlarmManager: ObservableObject {
+    static let shared = AlarmManager()
+    @Published var firingAlarm: Task? = nil
 
-    func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
-    }
+    private var timers: [String: Timer] = [:]
 
     func schedule(_ task: Task) {
-        guard let alarm = task.alarm else { return }
-        let parts = alarm.split(separator: ":").map { Int($0) ?? 0 }
+        guard let alarm = task.alarm, !task.done else { return }
+        cancel(task.id)
+        let parts = alarm.split(separator: ":").compactMap { Int($0) }
         guard parts.count == 2 else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "Task Alarm"
-        content.body = task.text
-        content.sound = .defaultCritical
-        var comps = DateComponents()
+        let now = Date()
+        var comps = Calendar.current.dateComponents([.year,.month,.day], from: now)
         comps.hour = parts[0]
         comps.minute = parts[1]
-        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
-        let req = UNNotificationRequest(identifier: task.id, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(req)
+        comps.second = 0
+        var fireDate = Calendar.current.date(from: comps) ?? now
+        // If time already passed today, schedule for tomorrow
+        if fireDate <= now { fireDate = Calendar.current.date(byAdding: .day, value: 1, to: fireDate)! }
+        let interval = fireDate.timeIntervalSince(now)
+        let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            self?.fire(task)
+        }
+        timers[task.id] = t
+    }
+
+    func fire(_ task: Task) {
+        timers.removeValue(forKey: task.id)
+        DispatchQueue.main.async {
+            self.firingAlarm = task
+            self.playSound()
+        }
     }
 
     func cancel(_ id: String) {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
+        timers[id]?.invalidate()
+        timers.removeValue(forKey: id)
+    }
+
+    func cancelAll() {
+        timers.values.forEach { $0.invalidate() }
+        timers.removeAll()
+    }
+
+    func rescheduleAll(_ tasks: [Task]) {
+        cancelAll()
+        tasks.filter { !$0.done && $0.alarm != nil }.forEach { schedule($0) }
+    }
+
+    func playSound() {
+        // Play beep using AudioServicesPlaySystemSound
+        // Sound ID 1005 = SMS received, works without entitlements
+        AudioServicesPlaySystemSound(1005)
+        // Play multiple times for attention
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { AudioServicesPlaySystemSound(1005) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { AudioServicesPlaySystemSound(1005) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { AudioServicesPlaySystemSound(1005) }
+        // Also vibrate
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
     }
 }
 
@@ -122,7 +229,6 @@ struct DashboardApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear {
                     UIApplication.shared.isIdleTimerDisabled = true
-                    NotificationManager.shared.requestPermission()
                 }
         }
     }
@@ -130,15 +236,15 @@ struct DashboardApp: App {
 
 // MARK: - Main Content
 struct ContentView: View {
+    @StateObject private var alarmMgr = AlarmManager.shared
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
                 Color(hex: "060a0f").ignoresSafeArea()
                 HStack(spacing: 12) {
-                    // Left: Clock
                     ClockView()
                         .frame(width: geo.size.width * 0.45)
-                    // Right: Calendar + Todo
                     VStack(spacing: 12) {
                         CalendarView()
                         TodoView()
@@ -146,6 +252,13 @@ struct ContentView: View {
                     .frame(width: geo.size.width * 0.51)
                 }
                 .padding(12)
+
+                // Alarm popup overlay
+                if let alarm = alarmMgr.firingAlarm {
+                    AlarmPopupView(task: alarm) {
+                        alarmMgr.firingAlarm = nil
+                    }
+                }
             }
         }
     }
@@ -448,7 +561,7 @@ struct TodoView: View {
                             TaskRowView(task: task,
                                 onToggle: { firebase.toggle(task) },
                                 onDelete: {
-                                    NotificationManager.shared.cancel(task.id)
+                                    AlarmManager.shared.cancel(task.id)
                                     firebase.delete(task)
                                 })
                         }
@@ -465,7 +578,9 @@ struct TodoView: View {
         let alarmStr = hasAlarm ? formatTime(pendingAlarm) : nil
         let task = Task(id: id, text: txt, done: false, alarm: alarmStr, created: ISO8601DateFormatter().string(from: Date()))
         firebase.add(task)
-        if let alarm = alarmStr { _ = alarm; NotificationManager.shared.schedule(task) }
+        if !task.done && task.alarm != nil {
+            AlarmManager.shared.schedule(task)
+        }
         newText = ""
         hasAlarm = false
         showAlarmPicker = false
@@ -520,6 +635,71 @@ struct TaskRowView: View {
         .cornerRadius(8)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
         .opacity(task.done ? 0.5 : 1)
+    }
+}
+
+// MARK: - Alarm Popup View
+struct AlarmPopupView: View {
+    let task: Task
+    let onDismiss: () -> Void
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.75).ignoresSafeArea()
+            VStack(spacing: 0) {
+                // Pulsing ring
+                ZStack {
+                    Circle()
+                        .stroke(Color(hex: "00ffc8").opacity(pulse ? 0.1 : 0.4), lineWidth: pulse ? 30 : 2)
+                        .frame(width: 100, height: 100)
+                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                    Circle()
+                        .fill(Color(hex: "00ffc8").opacity(0.15))
+                        .frame(width: 80, height: 80)
+                    Image(systemName: "bell.fill")
+                        .font(.system(size: 34))
+                        .foregroundColor(Color(hex: "00ffc8"))
+                }
+                .padding(.top, 36)
+                .padding(.bottom, 20)
+                .onAppear { pulse = true }
+
+                Text("ALARM")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
+                    .tracking(4)
+                    .padding(.bottom, 10)
+
+                Text(task.text)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 8)
+
+                if let alarm = task.alarm {
+                    Text(alarm)
+                        .font(.system(size: 48, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "00ffc8"))
+                        .padding(.bottom, 32)
+                }
+
+                Button(action: onDismiss) {
+                    Text("DISMISS")
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "060a0f"))
+                        .frame(width: 200, height: 50)
+                        .background(Color(hex: "00ffc8"))
+                        .cornerRadius(25)
+                }
+                .padding(.bottom, 40)
+            }
+            .frame(width: 320)
+            .background(Color(hex: "0d1a1a"))
+            .cornerRadius(24)
+            .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color(hex: "00ffc8").opacity(0.3), lineWidth: 1))
+        }
     }
 }
 
