@@ -37,5 +37,7 @@
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>Used for task alarms</string>
 </dict>
 </plist>
