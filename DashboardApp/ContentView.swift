@@ -1,6 +1,7 @@
 import SwiftUI
 import AudioToolbox
 import AVFoundation
+import CoreLocation
 
 // MARK: - Config
 let FIREBASE_URL = "https://my-todo-list-b567a-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -15,7 +16,91 @@ struct Task: Identifiable, Codable, Equatable {
     var created: String
 }
 
-// MARK: - Firebase Manager (reliable polling)
+// MARK: - Weather Manager
+struct WeatherData {
+    var temp: Double = 0
+    var description: String = ""
+    var icon: String = "cloud"
+    var city: String = ""
+}
+
+class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published var weather: WeatherData? = nil
+    @Published var status: String = "Locating..."
+    private var locationManager = CLLocationManager()
+    private var fetchTimer: Timer?
+
+    override init() {
+        super.init()
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyKilometer
+        locationManager.requestWhenInUseAuthorization()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.startUpdatingLocation()
+        case .denied, .restricted:
+            self.status = "Location denied"
+        default: break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let loc = locations.last else { return }
+        locationManager.stopUpdatingLocation()
+        fetchWeather(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
+        // Refresh weather every 10 minutes
+        fetchTimer?.invalidate()
+        fetchTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
+            self?.fetchWeather(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
+        }
+        // Get city name
+        CLGeocoder().reverseGeocodeLocation(loc) { [weak self] placemarks, _ in
+            if let city = placemarks?.first?.locality {
+                DispatchQueue.main.async { self?.weather?.city = city }
+            }
+        }
+    }
+
+    func fetchWeather(lat: Double, lon: Double) {
+        // Open-Meteo — free, no API key needed
+        let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,weathercode,windspeed_10m,relativehumidity_2m&temperature_unit=celsius&windspeed_unit=kmh"
+        guard let url = URL(string: urlStr) else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, err in
+            guard let self = self, let data = data, err == nil else { return }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let current = json["current"] as? [String: Any],
+                  let temp = current["temperature_2m"] as? Double,
+                  let code = current["weathercode"] as? Int else { return }
+            let (desc, icon) = Self.weatherInfo(code: code)
+            DispatchQueue.main.async {
+                self.weather = WeatherData(temp: temp, description: desc, icon: icon, city: self.weather?.city ?? "")
+                self.status = "ok"
+            }
+        }.resume()
+    }
+
+    static func weatherInfo(code: Int) -> (String, String) {
+        switch code {
+        case 0:             return ("Clear",         "sun.max.fill")
+        case 1:             return ("Mostly Clear",  "sun.max.fill")
+        case 2:             return ("Partly Cloudy", "cloud.sun.fill")
+        case 3:             return ("Overcast",      "cloud.fill")
+        case 45, 48:        return ("Foggy",         "cloud.fog.fill")
+        case 51, 53, 55:    return ("Drizzle",       "cloud.drizzle.fill")
+        case 61, 63, 65:    return ("Rain",          "cloud.rain.fill")
+        case 71, 73, 75:    return ("Snow",          "cloud.snow.fill")
+        case 80, 81, 82:    return ("Showers",       "cloud.heavyrain.fill")
+        case 95:            return ("Thunderstorm",  "cloud.bolt.fill")
+        case 96, 99:        return ("Hail Storm",    "cloud.bolt.rain.fill")
+        default:            return ("Cloudy",        "cloud.fill")
+        }
+    }
+}
+
+
 class FirebaseManager: ObservableObject {
     @Published var tasks: [Task] = []
     @Published var connected = false
@@ -288,6 +373,7 @@ struct ContentView: View {
 struct ClockView: View {
     @State private var now = Date()
     @State private var colonOn = true
+    @StateObject private var weather = WeatherManager()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var h: String { String(format: "%02d", Calendar.current.component(.hour, from: now)) }
@@ -302,34 +388,39 @@ struct ClockView: View {
 
     var body: some View {
         PanelView(accent: Color(hex: "00ffc8")) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+
+                // Label
                 Text("SYSTEM TIME")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(Color(hex: "00ffc8").opacity(0.4))
                     .tracking(3)
 
-                // Time
+                // Big clock — larger than before
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text(h)
-                        .font(.system(size: 68, weight: .bold, design: .monospaced))
+                        .font(.system(size: 86, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00ffc8"))
-                        .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 14)
+                        .shadow(color: Color(hex: "00ffc8").opacity(0.45), radius: 16)
+                        .minimumScaleFactor(0.5)
                     Text(":")
-                        .font(.system(size: 68, weight: .bold, design: .monospaced))
+                        .font(.system(size: 86, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00ffc8"))
-                        .frame(width: 28, alignment: .center)
+                        .frame(width: 32, alignment: .center)
                         .opacity(colonOn ? 1 : 0.05)
                     Text(m)
-                        .font(.system(size: 68, weight: .bold, design: .monospaced))
+                        .font(.system(size: 86, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00ffc8"))
-                        .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 14)
+                        .shadow(color: Color(hex: "00ffc8").opacity(0.45), radius: 16)
+                        .minimumScaleFactor(0.5)
                     Text(s)
-                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .font(.system(size: 26, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00aaff"))
                         .shadow(color: Color(hex: "00aaff").opacity(0.3), radius: 8)
                         .padding(.leading, 8)
-                        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 6 }
+                        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 8 }
                 }
+                .lineLimit(1)
 
                 // Seconds bar
                 GeometryReader { g in
@@ -346,18 +437,102 @@ struct ClockView: View {
                 }
                 .frame(height: 3)
 
+                // Date
                 Text(dateStr)
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .foregroundColor(Color.white.opacity(0.28))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
+
+                Spacer()
+
+                // Weather widget
+                WeatherWidgetView(manager: weather)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .onReceive(timer) { t in
             now = t
             colonOn = Calendar.current.component(.second, from: t) % 2 == 0
         }
+    }
+}
+
+// MARK: - Weather Widget
+struct WeatherWidgetView: View {
+    @ObservedObject var manager: WeatherManager
+
+    var body: some View {
+        Group {
+            if let w = manager.weather {
+                HStack(spacing: 10) {
+                    // Icon
+                    Image(systemName: w.icon)
+                        .font(.system(size: 28))
+                        .foregroundColor(iconColor(w.icon))
+                        .frame(width: 36)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        // Temp + description
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(String(format: "%.0f°", w.temp))
+                                .font(.system(size: 32, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                            Text("C")
+                                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.4))
+                                .alignmentGuide(.firstTextBaseline) { d in d[.bottom] }
+                        }
+                        Text(w.description.uppercased())
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.4))
+                            .tracking(1)
+                    }
+
+                    Spacer()
+
+                    // City
+                    if !w.city.isEmpty {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(Color(hex: "00ffc8").opacity(0.5))
+                            Text(w.city)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color(hex: "00ffc8").opacity(0.5))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .padding(10)
+                .background(Color.white.opacity(0.04))
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+            } else {
+                // Loading state
+                HStack(spacing: 8) {
+                    Image(systemName: "location.circle")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.2))
+                    Text(manager.status.uppercased())
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.2))
+                        .tracking(1)
+                }
+                .padding(10)
+                .background(Color.white.opacity(0.03))
+                .cornerRadius(10)
+            }
+        }
+    }
+
+    func iconColor(_ icon: String) -> Color {
+        if icon.contains("sun") { return Color(hex: "FFD700") }
+        if icon.contains("bolt") { return Color(hex: "FFD700") }
+        if icon.contains("snow") { return Color(hex: "B0E0FF") }
+        if icon.contains("rain") || icon.contains("drizzle") { return Color(hex: "00aaff") }
+        if icon.contains("fog") { return Color.white.opacity(0.5) }
+        return Color.white.opacity(0.6)
     }
 }
 
