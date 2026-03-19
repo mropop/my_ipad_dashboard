@@ -101,34 +101,22 @@ struct AlarmSound: Identifiable, Equatable {
 
 func scanSystemSounds() -> [AlarmSound] {
     let fm = FileManager.default
-    let dirs: [(path: String, label: String)] = [
-        ("/System/Library/Audio/UISounds",          ""),
-        ("/System/Library/Audio/UISounds/Modern",   "Modern/"),
-        ("/System/Library/Audio/UISounds/New",       "New/"),
-        ("/System/Library/Audio/UISounds/nano",      "Nano/"),
-        ("/System/Library/Ringtones",                "Ringtone/"),
-        ("/Library/Ringtones",                       "Ringtone/"),
-        ("/var/mobile/Library/Sounds",               "Custom/"),
-    ]
     var results: [AlarmSound] = []
-    var seen = Set<String>()
-    for (dir, label) in dirs {
-        guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
-        for file in files.sorted() {
-            let ext = (file as NSString).pathExtension.lowercased()
-            guard ["caf","aiff","aif","mp3","m4a","m4r","wav"].contains(ext) else { continue }
-            let fullPath = dir + "/" + file
-            guard !seen.contains(fullPath) else { continue }
-            seen.insert(fullPath)
-            let nameNoExt = (file as NSString).deletingPathExtension
-                .replacingOccurrences(of: "_", with: " ")
-                .replacingOccurrences(of: "-", with: " ")
-            let displayName = label.isEmpty ? nameNoExt : label + nameNoExt
-            results.append(AlarmSound(id: fullPath, name: displayName, path: fullPath))
-        }
+    let dir = "/Library/Ringtones"
+    guard let files = try? fm.contentsOfDirectory(atPath: dir) else {
+        return [AlarmSound(id: "default", name: "Default", path: "/System/Library/Audio/UISounds/alarm.caf")]
+    }
+    for file in files.sorted() {
+        let ext = (file as NSString).pathExtension.lowercased()
+        guard ["caf","aiff","aif","mp3","m4a","m4r","wav"].contains(ext) else { continue }
+        let fullPath = dir + "/" + file
+        let name = (file as NSString).deletingPathExtension
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        results.append(AlarmSound(id: fullPath, name: name, path: fullPath))
     }
     return results.isEmpty
-        ? [AlarmSound(id: "beep", name: "Beep", path: "/System/Library/Audio/UISounds/begin_record.caf")]
+        ? [AlarmSound(id: "default", name: "Default", path: "/System/Library/Audio/UISounds/alarm.caf")]
         : results
 }
 
