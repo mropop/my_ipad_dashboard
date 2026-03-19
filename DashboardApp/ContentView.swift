@@ -38,7 +38,7 @@ struct WeatherData {
 
 // MARK: - Weather Theme
 enum WeatherCondition {
-    case clearDay, clearSunset, clearNight
+    case clearDay, clearNight
     case cloudy, foggy
     case rainy, stormy, snowy
 }
@@ -53,21 +53,22 @@ struct WeatherTheme {
     let panelBorder: Color
     let label: String
 
-    static func from(code: Int, hour: Int) -> WeatherTheme {
-        // Night after 18:00 or before 6:00
+    static func from(code: Int, hour: Int, temp: Double = 20) -> WeatherTheme {
         let isNight = hour >= 18 || hour < 6
-        let isSunset = hour >= 17 && hour < 19
+
+        // Cold weather override — temp < 15°C regardless of condition
+        if temp < 15 && code < 95 {
+            return WeatherTheme(
+                condition: .snowy,
+                bgTop: Color(hex: "04080e"), bgBottom: Color(hex: "0a1828"),
+                accent: Color(hex: "88ccff"), accent2: Color(hex: "5599dd"),
+                textColor: Color(hex: "cce8ff"), panelBorder: Color(hex: "88ccff").opacity(0.18),
+                label: "COLD · \(Int(temp))°C")
+        }
 
         switch code {
         case 0, 1: // Clear
-            if isSunset {
-                return WeatherTheme(
-                    condition: .clearSunset,
-                    bgTop: Color(hex: "0d1a2e"), bgBottom: Color(hex: "c4783a"),
-                    accent: Color(hex: "ffcc44"), accent2: Color(hex: "ff9922"),
-                    textColor: Color(hex: "fff8e8"), panelBorder: Color(hex: "ffcc44").opacity(0.2),
-                    label: "GOLDEN HOUR")
-            } else if isNight {
+            if isNight {
                 return WeatherTheme(
                     condition: .clearNight,
                     bgTop: Color(hex: "020810"), bgBottom: Color(hex: "0a2838"),
@@ -77,10 +78,10 @@ struct WeatherTheme {
             } else {
                 return WeatherTheme(
                     condition: .clearDay,
-                    bgTop: Color(hex: "040e1a"), bgBottom: Color(hex: "0d6050"),
-                    accent: Color(hex: "00dca0"), accent2: Color(hex: "00aacc"),
-                    textColor: Color(hex: "e0fff8"), panelBorder: Color(hex: "00dca0").opacity(0.15),
-                    label: "TROPICAL")
+                    bgTop: Color(hex: "020c18"), bgBottom: Color(hex: "0a3060"),
+                    accent: Color(hex: "44aaff"), accent2: Color(hex: "88ccff"),
+                    textColor: Color(hex: "d0eeff"), panelBorder: Color(hex: "44aaff").opacity(0.2),
+                    label: "CLEAR SKY")
             }
         case 2, 3: // Cloudy
             return WeatherTheme(
@@ -134,12 +135,12 @@ class ThemeManager: ObservableObject {
     @Published var theme: WeatherTheme = WeatherTheme.from(code: 0, hour: Calendar.current.component(.hour, from: Date()))
     @Published var weatherCode: Int = 0
 
-    func update(code: Int) {
+    func update(code: Int, temp: Double = 20) {
         weatherCode = code
         let hour = Calendar.current.component(.hour, from: Date())
         DispatchQueue.main.async {
             withAnimation(.easeInOut(duration: 2.0)) {
-                self.theme = WeatherTheme.from(code: code, hour: hour)
+                self.theme = WeatherTheme.from(code: code, hour: hour, temp: temp)
             }
         }
     }
@@ -235,7 +236,7 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     city: self.weather?.city ?? "", forecast: forecast
                 )
                 self.status = "ok"
-                ThemeManager.shared.update(code: code)
+                ThemeManager.shared.update(code: code, temp: temp)
             }
         }.resume()
     }
@@ -554,8 +555,8 @@ struct WeatherBackgroundView: View {
                 StormView()
             case .snowy:
                 SnowView()
-            case .clearDay, .clearSunset:
-                OceanWaveView(color: condition == .clearSunset ? Color(hex: "c4783a") : Color(hex: "00dca0"))
+            case .clearDay:
+                OceanWaveView(color: Color(hex: "44aaff"))
             case .clearNight:
                 StarfieldView()
             case .foggy:
@@ -855,6 +856,7 @@ struct ClockView: View {
 struct WeatherWidgetView: View {
     @ObservedObject var manager: WeatherManager
     var compact: Bool = false
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         Group {
@@ -887,10 +889,10 @@ struct WeatherWidgetView: View {
                                 HStack(spacing: 3) {
                                     Image(systemName: "location.fill")
                                         .font(.system(size: 8))
-                                        .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
+                                        .foregroundColor(theme.theme.accent.opacity(0.6))
                                     Text(cityName)
                                         .font(.system(size: compact ? 9 : 11, weight: .medium, design: .monospaced))
-                                        .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
+                                        .foregroundColor(theme.theme.accent.opacity(0.6))
                                         .lineLimit(1)
                                 }
                             }
@@ -906,10 +908,10 @@ struct WeatherWidgetView: View {
                                 HStack(spacing: 2) {
                                     Image(systemName: "humidity.fill")
                                         .font(.system(size: 8))
-                                        .foregroundColor(Color(hex: "00aaff").opacity(0.6))
+                                        .foregroundColor(theme.theme.accent2.opacity(0.6))
                                     Text("\(w.humidity)%")
                                         .font(.system(size: compact ? 8 : 9, design: .monospaced))
-                                        .foregroundColor(Color(hex: "00aaff").opacity(0.6))
+                                        .foregroundColor(theme.theme.accent2.opacity(0.6))
                                 }
                                 HStack(spacing: 2) {
                                     Image(systemName: "wind")
@@ -988,6 +990,20 @@ struct CalendarView: View {
         return f.string(from: display).uppercased()
     }
 
+// MARK: - Calendar
+struct CalendarView: View {
+    var compact: Bool = false
+    @State private var display = Date()
+    @ObservedObject private var theme = ThemeManager.shared
+    private let cols = Array(repeating: GridItem(.flexible(), spacing: 1), count: 7)
+    private let dn = ["Su","Mo","Tu","We","Th","Fr","Sa"]
+
+    var label: String {
+        let f = DateFormatter()
+        f.dateFormat = compact ? "MMM yyyy" : "MMMM yyyy"
+        return f.string(from: display).uppercased()
+    }
+
     var cellSize: CGFloat { compact ? 18 : 22 }
     var fontSize: CGFloat { compact ? 9 : 10 }
 
@@ -1014,23 +1030,23 @@ struct CalendarView: View {
             HStack {
                 Text(label)
                     .font(.system(size: compact ? 10 : 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(hex: "00aaff"))
+                    .foregroundColor(theme.theme.accent2)
                 Spacer()
                 HStack(spacing: 3) {
                     Button { display = Calendar.current.date(byAdding: .month, value: -1, to: display)! } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: compact ? 10 : 12, weight: .semibold))
-                            .foregroundColor(Color(hex: "00aaff"))
+                            .foregroundColor(theme.theme.accent2)
                             .frame(width: compact ? 20 : 26, height: compact ? 20 : 26)
-                            .background(Color(hex: "00aaff").opacity(0.1))
+                            .background(theme.theme.accent2.opacity(0.1))
                             .cornerRadius(5)
                     }
                     Button { display = Calendar.current.date(byAdding: .month, value: 1, to: display)! } label: {
                         Image(systemName: "chevron.right")
                             .font(.system(size: compact ? 10 : 12, weight: .semibold))
-                            .foregroundColor(Color(hex: "00aaff"))
+                            .foregroundColor(theme.theme.accent2)
                             .frame(width: compact ? 20 : 26, height: compact ? 20 : 26)
-                            .background(Color(hex: "00aaff").opacity(0.1))
+                            .background(theme.theme.accent2.opacity(0.1))
                             .cornerRadius(5)
                     }
                 }
@@ -1044,7 +1060,7 @@ struct CalendarView: View {
                 ForEach(Array(days.enumerated()), id: \.offset) { _, day in
                     ZStack {
                         if day.2 {
-                            Circle().fill(Color(hex: "00ffc8")).frame(width: cellSize, height: cellSize)
+                            Circle().fill(theme.theme.accent).frame(width: cellSize, height: cellSize)
                         }
                         Text("\(day.0)")
                             .font(.system(size: fontSize, weight: day.2 ? .bold : .regular))
@@ -1061,11 +1077,11 @@ struct CalendarView: View {
 struct CalendarWeatherView: View {
     var compact: Bool = false
     @StateObject private var weather = WeatherManager()
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         PanelView() {
             VStack(spacing: compact ? 6 : 10) {
-                // Calendar — fixed size
                 CalendarView(compact: compact)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1073,11 +1089,10 @@ struct CalendarWeatherView: View {
                     .fill(Color.white.opacity(0.08))
                     .frame(height: 0.5)
 
-                // Weather — expands to fill remaining space
                 VStack(spacing: 4) {
                     Text("WEATHER")
                         .font(.system(size: 7, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(hex: "00aaff").opacity(0.4))
+                        .foregroundColor(theme.theme.accent2.opacity(0.4))
                         .tracking(3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     WeatherWidgetView(manager: weather, compact: compact)
@@ -1093,6 +1108,7 @@ struct CalendarWeatherView: View {
 struct TodoView: View {
     @StateObject private var fb = FirebaseManager()
     @ObservedObject private var alarmMgr = AlarmManager.shared
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var newText = ""
     @State private var hasAlarm = false
     @State private var pendingAlarm = Date()
@@ -1119,12 +1135,12 @@ struct TodoView: View {
                 HStack {
                     Text("TASKS")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "00ffc8"))
+                        .foregroundColor(theme.theme.accent)
                         .tracking(2)
                     Spacer()
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(fb.connected ? Color(hex: "00ffc8") : Color.gray)
+                            .fill(fb.connected ? theme.theme.accent : Color.gray)
                             .frame(width: 6, height: 6)
                         Text(fb.connected ? "Live" : "Offline")
                             .font(.system(size: 10, design: .monospaced))
@@ -1146,8 +1162,9 @@ struct TodoView: View {
                                 .foregroundColor(filterMode == k ? Color(hex: "060a0f") : .white.opacity(0.4))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 4)
-                                .background(filterMode == k ? Color(hex: "00ffc8") : Color.white.opacity(0.05))
+                                .background(filterMode == k ? theme.theme.accent : Color.white.opacity(0.05))
                                 .cornerRadius(5)
+                                .animation(.easeInOut(duration: 0.3), value: theme.theme.label)
                         }
                     }
                     Spacer()
@@ -1159,12 +1176,12 @@ struct TodoView: View {
                             Text(availableAlarmSounds.first { $0.id == alarmMgr.selectedSoundId }?.name ?? "Alarm")
                                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                         }
-                        .foregroundColor(Color(hex: "00aaff"))
+                        .foregroundColor(theme.theme.accent2)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 4)
-                        .background(Color(hex: "00aaff").opacity(0.08))
+                        .background(theme.theme.accent2.opacity(0.08))
                         .cornerRadius(5)
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(hex: "00aaff").opacity(0.2), lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(theme.theme.accent2.opacity(0.2), lineWidth: 1))
                     }
                 }
 
@@ -1183,28 +1200,23 @@ struct TodoView: View {
                                     HStack {
                                         Image(systemName: alarmMgr.selectedSoundId == sound.id ? "checkmark.circle.fill" : "circle")
                                             .font(.system(size: 12))
-                                            .foregroundColor(alarmMgr.selectedSoundId == sound.id ? Color(hex: "00ffc8") : .white.opacity(0.3))
+                                            .foregroundColor(alarmMgr.selectedSoundId == sound.id ? theme.theme.accent : .white.opacity(0.3))
                                         Text(sound.name)
                                             .font(.system(size: 12))
-                                            .foregroundColor(alarmMgr.selectedSoundId == sound.id ? Color(hex: "00ffc8") : .white.opacity(0.7))
+                                            .foregroundColor(alarmMgr.selectedSoundId == sound.id ? theme.theme.accent : .white.opacity(0.7))
                                         Spacer()
-                                        // Preview button
-                                        Button {
-                                            previewSound(sound)
-                                        } label: {
+                                        Button { previewSound(sound) } label: {
                                             Image(systemName: "play.circle")
                                                 .font(.system(size: 14))
-                                                .foregroundColor(Color(hex: "00aaff").opacity(0.7))
+                                                .foregroundColor(theme.theme.accent2.opacity(0.7))
                                         }
                                     }
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 6)
-                                    .background(alarmMgr.selectedSoundId == sound.id ? Color(hex: "00ffc8").opacity(0.08) : Color.clear)
+                                    .background(alarmMgr.selectedSoundId == sound.id ? theme.theme.accent.opacity(0.08) : Color.clear)
                                     .cornerRadius(6)
                                     .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        alarmMgr.saveSelectedSound(sound.id)
-                                    }
+                                    .onTapGesture { alarmMgr.saveSelectedSound(sound.id) }
                                 }
                             }
                         }
@@ -1213,7 +1225,7 @@ struct TodoView: View {
                     .padding(10)
                     .background(Color.white.opacity(0.04))
                     .cornerRadius(10)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "00aaff").opacity(0.15), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.theme.accent2.opacity(0.15), lineWidth: 1))
                 }
 
                 // Input
@@ -1225,18 +1237,18 @@ struct TodoView: View {
                         .padding(.vertical, 7)
                         .background(Color.white.opacity(0.05))
                         .cornerRadius(8)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "00ffc8").opacity(0.2), lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.theme.accent.opacity(0.2), lineWidth: 1))
                         .onSubmit { addTask() }
 
                     Button { showPicker.toggle() } label: {
                         Text(hasAlarm ? fmt(pendingAlarm) : "Alarm")
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00aaff"))
+                            .foregroundColor(theme.theme.accent2)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 7)
-                            .background(hasAlarm ? Color(hex: "00aaff").opacity(0.2) : Color(hex: "00aaff").opacity(0.08))
+                            .background(hasAlarm ? theme.theme.accent2.opacity(0.2) : theme.theme.accent2.opacity(0.08))
                             .cornerRadius(8)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "00aaff").opacity(hasAlarm ? 0.6 : 0.2), lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.theme.accent2.opacity(hasAlarm ? 0.6 : 0.2), lineWidth: 1))
                     }
 
                     Button(action: addTask) {
@@ -1245,7 +1257,7 @@ struct TodoView: View {
                             .foregroundColor(Color(hex: "060a0f"))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
-                            .background(Color(hex: "00ffc8"))
+                            .background(theme.theme.accent)
                             .cornerRadius(8)
                     }
                 }
@@ -1270,9 +1282,9 @@ struct TodoView: View {
                             Button { hasAlarm = true; showPicker = false } label: {
                                 Text("Set \(fmt(pendingAlarm))")
                                     .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(Color(hex: "00ffc8"))
+                                    .foregroundColor(theme.theme.accent)
                                     .frame(maxWidth: .infinity).padding(.vertical, 6)
-                                    .background(Color(hex: "00ffc8").opacity(0.12)).cornerRadius(7)
+                                    .background(theme.theme.accent.opacity(0.12)).cornerRadius(7)
                             }
                         }
                     }
@@ -1338,19 +1350,20 @@ struct TaskRow: View {
     let task: Task
     let onToggle: () -> Void
     let onDelete: () -> Void
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         HStack(spacing: 8) {
             Button(action: onToggle) {
                 ZStack {
                     Circle()
-                        .strokeBorder(Color(hex: "00ffc8").opacity(0.35), lineWidth: 1.5)
+                        .strokeBorder(theme.theme.accent.opacity(0.35), lineWidth: 1.5)
                         .frame(width: 20, height: 20)
                     if task.done {
-                        Circle().fill(Color(hex: "00ffc8").opacity(0.2)).frame(width: 20, height: 20)
+                        Circle().fill(theme.theme.accent.opacity(0.2)).frame(width: 20, height: 20)
                         Image(systemName: "checkmark")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(Color(hex: "00ffc8"))
+                            .foregroundColor(theme.theme.accent)
                     }
                 }
             }
@@ -1364,10 +1377,10 @@ struct TaskRow: View {
                     HStack(spacing: 3) {
                         Image(systemName: "bell.fill")
                             .font(.system(size: 8))
-                            .foregroundColor(Color(hex: "00aaff"))
+                            .foregroundColor(theme.theme.accent2)
                         Text(alarm)
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(Color(hex: "00aaff"))
+                            .foregroundColor(theme.theme.accent2)
                     }
                 }
             }
@@ -1395,6 +1408,7 @@ struct AlarmPopupView: View {
     let task: Task
     let onDismiss: () -> Void
     @State private var pulse = false
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         ZStack {
@@ -1402,13 +1416,13 @@ struct AlarmPopupView: View {
             VStack(spacing: 0) {
                 ZStack {
                     Circle()
-                        .stroke(Color(hex: "00ffc8").opacity(pulse ? 0.08 : 0.45), lineWidth: pulse ? 32 : 2)
+                        .stroke(theme.theme.accent.opacity(pulse ? 0.08 : 0.45), lineWidth: pulse ? 32 : 2)
                         .frame(width: 100, height: 100)
                         .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
-                    Circle().fill(Color(hex: "00ffc8").opacity(0.12)).frame(width: 80, height: 80)
+                    Circle().fill(theme.theme.accent.opacity(0.12)).frame(width: 80, height: 80)
                     Image(systemName: "bell.fill")
                         .font(.system(size: 34))
-                        .foregroundColor(Color(hex: "00ffc8"))
+                        .foregroundColor(theme.theme.accent)
                 }
                 .padding(.top, 36)
                 .padding(.bottom, 20)
@@ -1416,7 +1430,7 @@ struct AlarmPopupView: View {
 
                 Text("ALARM")
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color(hex: "00ffc8").opacity(0.5))
+                    .foregroundColor(theme.theme.accent.opacity(0.5))
                     .tracking(5)
                     .padding(.bottom, 10)
 
@@ -1430,12 +1444,11 @@ struct AlarmPopupView: View {
                 if let alarm = task.alarm {
                     Text(alarm)
                         .font(.system(size: 52, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "00ffc8"))
+                        .foregroundColor(theme.theme.accent)
                         .padding(.bottom, 32)
                 }
 
                 Button {
-                    // Stop sound then dismiss
                     AlarmManager.shared.stopAlarm()
                     onDismiss()
                 } label: {
@@ -1443,7 +1456,7 @@ struct AlarmPopupView: View {
                         .font(.system(size: 15, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "060a0f"))
                         .frame(width: 200, height: 50)
-                        .background(Color(hex: "00ffc8"))
+                        .background(theme.theme.accent)
                         .cornerRadius(25)
                 }
                 .padding(.bottom, 40)
@@ -1451,7 +1464,7 @@ struct AlarmPopupView: View {
             .frame(width: 320)
             .background(Color(hex: "0c1a1a"))
             .cornerRadius(24)
-            .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color(hex: "00ffc8").opacity(0.25), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 24).stroke(theme.theme.accent.opacity(0.25), lineWidth: 1))
         }
     }
 }
