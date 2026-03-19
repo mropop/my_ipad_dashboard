@@ -398,7 +398,7 @@ struct ContentView: View {
                 VStack(spacing: 10) {
                     // TOP: Clock — compact in landscape, tall in portrait
                     ClockView(compact: isLandscape)
-                        .frame(height: isLandscape ? geo.size.height * 0.38 : geo.size.height * 0.52)
+                        .frame(height: isLandscape ? geo.size.height * 0.30 : geo.size.height * 0.45)
 
                     // BOTTOM: Calendar+Weather | Todo
                     HStack(spacing: 10) {
@@ -437,20 +437,21 @@ struct ClockView: View {
         return f.string(from: now).uppercased()
     }
 
-    var clockSize: CGFloat { compact ? 72 : 110 }
-    var secSize: CGFloat { compact ? 22 : 32 }
+    var clockSize: CGFloat { compact ? 96 : 110 }
+    var secSize: CGFloat { compact ? 28 : 32 }
 
     var body: some View {
         PanelView(accent: Color(hex: "00ffc8")) {
             if compact {
-                // Landscape: clock + date side by side
-                HStack(alignment: .center, spacing: 16) {
-                    // Time
+                // Landscape: clock centered, date + bar below
+                VStack(spacing: 6) {
+                    Spacer()
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Spacer()
                         Text(h)
                             .font(.system(size: clockSize, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(hex: "00ffc8"))
-                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 14)
+                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 16)
                             .minimumScaleFactor(0.5).lineLimit(1)
                         Text(":")
                             .font(.system(size: clockSize, weight: .bold, design: .monospaced))
@@ -459,39 +460,35 @@ struct ClockView: View {
                         Text(m)
                             .font(.system(size: clockSize, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(hex: "00ffc8"))
-                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 14)
+                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 16)
                             .minimumScaleFactor(0.5).lineLimit(1)
                         Text(s)
                             .font(.system(size: secSize, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(hex: "00aaff"))
                             .padding(.leading, 4)
-                            .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 8 }
+                            .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 10 }
                             .lineLimit(1)
+                        Spacer()
                     }
                     .fixedSize(horizontal: false, vertical: true)
-
-                    // Date + bar
-                    VStack(alignment: .leading, spacing: 6) {
-                        Spacer()
-                        Text(dateStr)
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.28))
-                            .lineLimit(1).minimumScaleFactor(0.6)
-                        GeometryReader { g in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
-                                Capsule()
-                                    .fill(LinearGradient(colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")], startPoint: .leading, endPoint: .trailing))
-                                    .frame(width: g.size.width * secProg, height: 3)
-                                    .animation(.linear(duration: 1), value: secProg)
-                            }
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
+                            Capsule()
+                                .fill(LinearGradient(colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")], startPoint: .leading, endPoint: .trailing))
+                                .frame(width: g.size.width * secProg, height: 3)
+                                .animation(.linear(duration: 1), value: secProg)
                         }
-                        .frame(height: 3)
-                        Spacer()
                     }
+                    .frame(height: 3)
+                    Text(dateStr)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.28))
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.vertical, 4)
             } else {
                 // Portrait: stacked layout
                 VStack(alignment: .center, spacing: 10) {
@@ -555,6 +552,7 @@ struct WeatherWidgetView: View {
         Group {
             if let w = manager.weather {
                 VStack(spacing: compact ? 5 : 8) {
+                    // Current weather row
                     HStack(alignment: .center, spacing: 8) {
                         Image(systemName: w.icon)
                             .font(.system(size: compact ? 24 : 32))
@@ -616,6 +614,10 @@ struct WeatherWidgetView: View {
                             }
                         }
                     }
+
+                    // Spacer pushes forecast to bottom
+                    Spacer()
+
                     if !w.forecast.isEmpty {
                         Rectangle().fill(Color.white.opacity(0.06)).frame(height: 0.5)
                         HStack(spacing: 4) {
@@ -639,10 +641,7 @@ struct WeatherWidgetView: View {
                         }
                     }
                 }
-                .padding(compact ? 7 : 10)
-                .background(Color.white.opacity(0.04))
-                .cornerRadius(10)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "location.circle")
@@ -653,9 +652,7 @@ struct WeatherWidgetView: View {
                         .foregroundColor(.white.opacity(0.2))
                         .tracking(1)
                 }
-                .padding(compact ? 7 : 10)
-                .background(Color.white.opacity(0.03))
-                .cornerRadius(10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -760,10 +757,15 @@ struct CalendarWeatherView: View {
     var body: some View {
         PanelView(accent: Color(hex: "00aaff")) {
             VStack(spacing: compact ? 6 : 10) {
+                // Calendar — fixed size
                 CalendarView(compact: compact)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Rectangle()
                     .fill(Color.white.opacity(0.08))
                     .frame(height: 0.5)
+
+                // Weather — expands to fill remaining space
                 VStack(spacing: 4) {
                     Text("WEATHER")
                         .font(.system(size: 7, weight: .medium, design: .monospaced))
@@ -772,7 +774,9 @@ struct CalendarWeatherView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     WeatherWidgetView(manager: weather, compact: compact)
                 }
+                .frame(maxHeight: .infinity, alignment: .top)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
 }
@@ -1159,8 +1163,10 @@ struct PanelView<Content: View>: View {
                     .frame(width: g.size.width * 0.7, height: 1)
                     .position(x: g.size.width / 2, y: 0)
                     .opacity(0.5)
+                content()
+                    .padding(12)
+                    .frame(width: g.size.width, height: g.size.height)
             }
-            content().padding(12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
