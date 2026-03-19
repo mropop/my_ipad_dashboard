@@ -981,19 +981,6 @@ struct WeatherWidgetView: View {
 struct CalendarView: View {
     var compact: Bool = false
     @State private var display = Date()
-    private let cols = Array(repeating: GridItem(.flexible(), spacing: 1), count: 7)
-    private let dn = ["Su","Mo","Tu","We","Th","Fr","Sa"]
-
-    var label: String {
-        let f = DateFormatter()
-        f.dateFormat = compact ? "MMM yyyy" : "MMMM yyyy"
-        return f.string(from: display).uppercased()
-    }
-
-// MARK: - Calendar
-struct CalendarView: View {
-    var compact: Bool = false
-    @State private var display = Date()
     @ObservedObject private var theme = ThemeManager.shared
     private let cols = Array(repeating: GridItem(.flexible(), spacing: 1), count: 7)
     private let dn = ["Su","Mo","Tu","We","Th","Fr","Sa"]
