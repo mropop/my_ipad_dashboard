@@ -3,7 +3,8 @@ import AudioToolbox
 import AVFoundation
 
 // MARK: - Config
-let FIREBASE_URL = "https://my-todo-list-b567a-default-rtdb.asia-southeast1.firebasedatabase.app"
+let FIREBASE_URL = "__FIREBASE_URL__"
+let FIREBASE_KEY = "__FIREBASE_KEY__"
 
 // MARK: - Task Model
 struct Task: Identifiable, Codable, Equatable {
@@ -91,12 +92,79 @@ class FirebaseManager: ObservableObject {
     }
 }
 
+// MARK: - Available alarm sounds (scanned from system)
+struct AlarmSound: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let path: String
+}
+
+func scanSystemSounds() -> [AlarmSound] {
+    let fm = FileManager.default
+    let dirs: [(path: String, label: String)] = [
+        ("/System/Library/Audio/UISounds",          ""),
+        ("/System/Library/Audio/UISounds/Modern",   "Modern/"),
+        ("/System/Library/Audio/UISounds/New",       "New/"),
+        ("/System/Library/Audio/UISounds/nano",      "Nano/"),
+        ("/System/Library/Ringtones",                "Ringtone/"),
+        ("/Library/Ringtones",                       "Ringtone/"),
+        ("/var/mobile/Library/Sounds",               "Custom/"),
+    ]
+    var results: [AlarmSound] = []
+    var seen = Set<String>()
+    for (dir, label) in dirs {
+        guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+        for file in files.sorted() {
+            let ext = (file as NSString).pathExtension.lowercased()
+            guard ["caf","aiff","aif","mp3","m4a","m4r","wav"].contains(ext) else { continue }
+            let fullPath = dir + "/" + file
+            guard !seen.contains(fullPath) else { continue }
+            seen.insert(fullPath)
+            let nameNoExt = (file as NSString).deletingPathExtension
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "-", with: " ")
+            let displayName = label.isEmpty ? nameNoExt : label + nameNoExt
+            results.append(AlarmSound(id: fullPath, name: displayName, path: fullPath))
+        }
+    }
+    return results.isEmpty
+        ? [AlarmSound(id: "beep", name: "Beep", path: "/System/Library/Audio/UISounds/begin_record.caf")]
+        : results
+}
+
+let availableAlarmSounds: [AlarmSound] = scanSystemSounds()
+
 // MARK: - Alarm Manager
 class AlarmManager: ObservableObject {
     static let shared = AlarmManager()
     @Published var firingAlarm: Task? = nil
+    @Published var selectedSoundId: String = "alarm"
     private var timers: [String: Timer] = [:]
-    var audioPlayer: AVAudioPlayer?  // keep reference alive
+    var audioPlayer: AVAudioPlayer?
+
+    init() {
+        // Load saved sound preference — default to first alarm sound found
+        let saved = UserDefaults.standard.string(forKey: "alarm_sound_id")
+        if let saved = saved, availableAlarmSounds.contains(where: { $0.id == saved }) {
+            selectedSoundId = saved
+        } else {
+            // Pick a good default — prefer alarm.caf
+            selectedSoundId = availableAlarmSounds.first { $0.path.contains("alarm") }?.id
+                ?? availableAlarmSounds.first?.id ?? ""
+        }
+    }
+
+    func saveSelectedSound(_ id: String) {
+        selectedSoundId = id
+        UserDefaults.standard.set(id, forKey: "alarm_sound_id")
+    }
+
+    func stopAlarm() {
+        audioPlayer?.stop()
+        audioPlayer = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        firingAlarm = nil
+    }
 
     func schedule(_ task: Task) {
         guard let alarm = task.alarm, !task.done else { return }
@@ -149,47 +217,33 @@ class AlarmManager: ObservableObject {
     }
 
     func playAlarm() {
-        // Set audio session to playback — bypasses silent/ring switch
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch { print("Audio session: \(error)") }
 
-        // Use system sound file directly — simplest and most reliable
-        // /System/Library/Audio/UISounds/ contains many built-in sounds
-        let soundPaths = [
-            "/System/Library/Audio/UISounds/alarm.caf",
-            "/System/Library/Audio/UISounds/begin_record.caf",
-            "/System/Library/Audio/UISounds/low_power.caf",
-            "/System/Library/Audio/UISounds/payment_success.caf",
-        ]
-
-        // Try each path until one works
+        // selectedSoundId is the full path
+        let pathsToTry: [String] = [selectedSoundId] + availableAlarmSounds.map { $0.path }
         var player: AVAudioPlayer?
-        for path in soundPaths {
-            let url = URL(fileURLWithPath: path)
-            if let p = try? AVAudioPlayer(contentsOf: url) {
-                player = p
-                break
+        for path in pathsToTry where !path.isEmpty {
+            if let p = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: path)) {
+                player = p; break
             }
         }
 
         if let player = player {
-            player.numberOfLoops = 3  // play 4 times total
+            player.numberOfLoops = 5
             player.volume = 1.0
             player.prepareToPlay()
             player.play()
-            // Keep reference alive
             self.audioPlayer = player
         } else {
-            // Fallback — system sound IDs
-            // 1304 = tweet, 1016 = payment success, 1033 = begin_record
-            AudioServicesPlaySystemSound(1304)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { AudioServicesPlaySystemSound(1304) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { AudioServicesPlaySystemSound(1304) }
+            for i in 0..<4 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.6) {
+                    AudioServicesPlaySystemSound(1304)
+                }
+            }
         }
-
-        // Vibrate
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
@@ -401,11 +455,14 @@ struct CalendarView: View {
 // MARK: - Todo
 struct TodoView: View {
     @StateObject private var fb = FirebaseManager()
+    @ObservedObject private var alarmMgr = AlarmManager.shared
     @State private var newText = ""
     @State private var hasAlarm = false
     @State private var pendingAlarm = Date()
     @State private var showPicker = false
+    @State private var showSoundPicker = false
     @State private var filterMode = "all"
+    @State private var previewPlayer: AVAudioPlayer?
 
     var filtered: [Task] {
         fb.tasks.filter {
@@ -443,7 +500,7 @@ struct TodoView: View {
                         .padding(.leading, 6)
                 }
 
-                // Filter tabs
+                // Filter tabs + sound button
                 HStack(spacing: 4) {
                     ForEach([("all","All"),("pending","Pending"),("done","Done"),("alarm","Alarm")], id: \.0) { k, l in
                         Button { filterMode = k } label: {
@@ -457,6 +514,69 @@ struct TodoView: View {
                         }
                     }
                     Spacer()
+                    // Sound picker button
+                    Button { showSoundPicker.toggle() } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 9))
+                            Text(availableAlarmSounds.first { $0.id == alarmMgr.selectedSoundId }?.name ?? "Alarm")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundColor(Color(hex: "00aaff"))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Color(hex: "00aaff").opacity(0.08))
+                        .cornerRadius(5)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(hex: "00aaff").opacity(0.2), lineWidth: 1))
+                    }
+                }
+
+                // Sound picker dropdown
+                if showSoundPicker {
+                    VStack(spacing: 4) {
+                        Text("ALARM SOUND")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.3))
+                            .tracking(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 2)
+                        ScrollView {
+                            VStack(spacing: 3) {
+                                ForEach(availableAlarmSounds) { sound in
+                                    HStack {
+                                        Image(systemName: alarmMgr.selectedSoundId == sound.id ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(alarmMgr.selectedSoundId == sound.id ? Color(hex: "00ffc8") : .white.opacity(0.3))
+                                        Text(sound.name)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(alarmMgr.selectedSoundId == sound.id ? Color(hex: "00ffc8") : .white.opacity(0.7))
+                                        Spacer()
+                                        // Preview button
+                                        Button {
+                                            previewSound(sound)
+                                        } label: {
+                                            Image(systemName: "play.circle")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(Color(hex: "00aaff").opacity(0.7))
+                                        }
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 6)
+                                    .background(alarmMgr.selectedSoundId == sound.id ? Color(hex: "00ffc8").opacity(0.08) : Color.clear)
+                                    .cornerRadius(6)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        alarmMgr.saveSelectedSound(sound.id)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 160)
+                    }
+                    .padding(10)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: "00aaff").opacity(0.15), lineWidth: 1))
                 }
 
                 // Input
@@ -541,6 +661,21 @@ struct TodoView: View {
                     }
                 }
             }
+        }
+    }
+
+    func previewSound(_ sound: AlarmSound) {
+        previewPlayer?.stop()
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {}
+        if let player = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: sound.path)) {
+            player.volume = 1.0
+            player.play()
+            previewPlayer = player
+        } else {
+            AudioServicesPlaySystemSound(1304)
         }
     }
 
@@ -662,7 +797,11 @@ struct AlarmPopupView: View {
                         .padding(.bottom, 32)
                 }
 
-                Button(action: onDismiss) {
+                Button {
+                    // Stop sound then dismiss
+                    AlarmManager.shared.stopAlarm()
+                    onDismiss()
+                } label: {
                     Text("DISMISS")
                         .font(.system(size: 15, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "060a0f"))
