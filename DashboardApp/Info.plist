@@ -39,5 +39,9 @@
 	</array>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Used for task alarms</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Used to show local weather on dashboard</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Used to show local weather on dashboard</string>
 </dict>
 </plist>
