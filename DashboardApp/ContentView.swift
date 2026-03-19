@@ -17,11 +17,23 @@ struct Task: Identifiable, Codable, Equatable {
 }
 
 // MARK: - Weather Manager
+struct DayForecast: Identifiable {
+    let id: Int
+    let date: String      // "Mon", "Tue"...
+    let high: Double
+    let low: Double
+    let icon: String
+}
+
 struct WeatherData {
     var temp: Double = 0
+    var feelsLike: Double = 0
+    var humidity: Int = 0
+    var windSpeed: Double = 0
     var description: String = ""
     var icon: String = "cloud"
     var city: String = ""
+    var forecast: [DayForecast] = []
 }
 
 class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -65,18 +77,47 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func fetchWeather(lat: Double, lon: Double) {
-        // Open-Meteo — free, no API key needed
-        let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,weathercode,windspeed_10m,relativehumidity_2m&temperature_unit=celsius&windspeed_unit=kmh"
+        // Open-Meteo — current + 5 day forecast + feels like + humidity + wind
+        let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)" +
+            "&current=temperature_2m,apparent_temperature,weathercode,windspeed_10m,relativehumidity_2m" +
+            "&daily=weathercode,temperature_2m_max,temperature_2m_min" +
+            "&temperature_unit=celsius&windspeed_unit=kmh&forecast_days=6&timezone=auto"
         guard let url = URL(string: urlStr) else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, err in
             guard let self = self, let data = data, err == nil else { return }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let current = json["current"] as? [String: Any],
                   let temp = current["temperature_2m"] as? Double,
+                  let feels = current["apparent_temperature"] as? Double,
+                  let humidity = current["relativehumidity_2m"] as? Int,
+                  let wind = current["windspeed_10m"] as? Double,
                   let code = current["weathercode"] as? Int else { return }
             let (desc, icon) = Self.weatherInfo(code: code)
+
+            // Parse 5-day forecast (skip today = index 0)
+            var forecast: [DayForecast] = []
+            if let daily = json["daily"] as? [String: Any],
+               let dates = daily["time"] as? [String],
+               let codes = daily["weathercode"] as? [Int],
+               let highs = daily["temperature_2m_max"] as? [Double],
+               let lows = daily["temperature_2m_min"] as? [Double] {
+                let df = DateFormatter()
+                df.dateFormat = "yyyy-MM-dd"
+                let df2 = DateFormatter()
+                df2.dateFormat = "EEE"
+                for i in 1..<min(6, dates.count) {
+                    let dayLabel = df.date(from: dates[i]).flatMap { df2.string(from: $0) } ?? "Day \(i)"
+                    let (_, ic) = Self.weatherInfo(code: codes[i])
+                    forecast.append(DayForecast(id: i, date: dayLabel.uppercased(), high: highs[i], low: lows[i], icon: ic))
+                }
+            }
+
             DispatchQueue.main.async {
-                self.weather = WeatherData(temp: temp, description: desc, icon: icon, city: self.weather?.city ?? "")
+                self.weather = WeatherData(
+                    temp: temp, feelsLike: feels, humidity: humidity,
+                    windSpeed: wind, description: desc, icon: icon,
+                    city: self.weather?.city ?? "", forecast: forecast
+                )
                 self.status = "ok"
             }
         }.resume()
@@ -465,42 +506,103 @@ struct WeatherWidgetView: View {
     var body: some View {
         Group {
             if let w = manager.weather {
-                HStack(spacing: 10) {
-                    // Icon
-                    Image(systemName: w.icon)
-                        .font(.system(size: 28))
-                        .foregroundColor(iconColor(w.icon))
-                        .frame(width: 36)
+                VStack(spacing: 8) {
+                    // Current weather row
+                    HStack(alignment: .center, spacing: 10) {
+                        // Icon
+                        Image(systemName: w.icon)
+                            .font(.system(size: 32))
+                            .foregroundColor(iconColor(w.icon))
+                            .frame(width: 40)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        // Temp + description
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(String(format: "%.0f°", w.temp))
-                                .font(.system(size: 32, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white)
-                            Text("C")
-                                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        // Temp + desc
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text(String(format: "%.0f°", w.temp))
+                                    .font(.system(size: 36, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                Text("C")
+                                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.35))
+                                    .alignmentGuide(.firstTextBaseline) { d in d[.bottom] }
+                            }
+                            Text(w.description.uppercased())
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.4))
-                                .alignmentGuide(.firstTextBaseline) { d in d[.bottom] }
+                                .tracking(1)
                         }
-                        Text(w.description.uppercased())
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.4))
-                            .tracking(1)
+
+                        Spacer()
+
+                        // City + extra info
+                        VStack(alignment: .trailing, spacing: 4) {
+                            if !w.city.isEmpty {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "location.fill")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
+                                    Text(w.city)
+                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                        .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
+                                        .lineLimit(1)
+                                }
+                            }
+                            // Feels like
+                            HStack(spacing: 3) {
+                                Image(systemName: "thermometer.medium")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.white.opacity(0.3))
+                                Text(String(format: "Feels %.0f°", w.feelsLike))
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.3))
+                            }
+                            // Humidity + wind
+                            HStack(spacing: 8) {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "humidity.fill")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(Color(hex: "00aaff").opacity(0.6))
+                                    Text("\(w.humidity)%")
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(Color(hex: "00aaff").opacity(0.6))
+                                }
+                                HStack(spacing: 2) {
+                                    Image(systemName: "wind")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(.white.opacity(0.3))
+                                    Text(String(format: "%.0fkm/h", w.windSpeed))
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(.white.opacity(0.3))
+                                }
+                            }
+                        }
                     }
 
-                    Spacer()
+                    // Divider
+                    if !w.forecast.isEmpty {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.06))
+                            .frame(height: 0.5)
 
-                    // City
-                    if !w.city.isEmpty {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Image(systemName: "location.fill")
-                                .font(.system(size: 9))
-                                .foregroundColor(Color(hex: "00ffc8").opacity(0.5))
-                            Text(w.city)
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundColor(Color(hex: "00ffc8").opacity(0.5))
-                                .lineLimit(1)
+                        // 5-day forecast
+                        HStack(spacing: 4) {
+                            ForEach(w.forecast) { day in
+                                VStack(spacing: 3) {
+                                    Text(day.date)
+                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                        .foregroundColor(.white.opacity(0.35))
+                                    Image(systemName: day.icon)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(iconColor(day.icon))
+                                    Text(String(format: "%.0f°", day.high))
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.white.opacity(0.8))
+                                    Text(String(format: "%.0f°", day.low))
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(.white.opacity(0.3))
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
                         }
                     }
                 }
@@ -509,7 +611,6 @@ struct WeatherWidgetView: View {
                 .cornerRadius(10)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
             } else {
-                // Loading state
                 HStack(spacing: 8) {
                     Image(systemName: "location.circle")
                         .font(.system(size: 14))
