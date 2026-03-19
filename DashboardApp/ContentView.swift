@@ -398,7 +398,7 @@ struct ContentView: View {
                 VStack(spacing: 10) {
                     // TOP: Clock
                     ClockView(compact: isLandscape)
-                        .frame(height: isLandscape ? geo.size.height * 0.40 : geo.size.height * 0.45)
+                        .frame(height: isLandscape ? geo.size.height * 0.50 : geo.size.height * 0.50)
 
                     // BOTTOM: Calendar+Weather | Todo
                     HStack(spacing: 10) {
@@ -442,80 +442,28 @@ struct ClockView: View {
 
     var body: some View {
         PanelView(accent: Color(hex: "00ffc8")) {
-            if compact {
-                // Landscape: clock centered, date + bar below
+            GeometryReader { geo in
                 VStack(spacing: 6) {
                     Spacer()
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    // Clock scales to fill available width
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
                         Spacer()
-                        Text(h)
-                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
+                        Text("\(h):\(m)")
+                            .font(.system(size: 999, weight: .bold, design: .monospaced))
+                            .minimumScaleFactor(0.01)
+                            .lineLimit(1)
                             .foregroundColor(Color(hex: "00ffc8"))
                             .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 16)
-                            .minimumScaleFactor(0.5).lineLimit(1)
-                        Text(":")
-                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00ffc8"))
-                            .opacity(colonOn ? 1 : 0.05).lineLimit(1)
-                        Text(m)
-                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00ffc8"))
-                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 16)
-                            .minimumScaleFactor(0.5).lineLimit(1)
+                            .frame(width: geo.size.width * 0.78)
+                            .opacity(colonOn ? 1 : 1) // always show HH:MM
+                        // Blinking colon overlay hack — use ZStack
                         Text(s)
-                            .font(.system(size: secSize, weight: .bold, design: .monospaced))
+                            .font(.system(size: geo.size.height * 0.30, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(hex: "00aaff"))
-                            .padding(.leading, 4)
-                            .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 10 }
-                            .lineLimit(1)
+                            .frame(width: geo.size.width * 0.18)
+                            .padding(.bottom, geo.size.height * 0.08)
                         Spacer()
                     }
-                    .fixedSize(horizontal: false, vertical: true)
-                    GeometryReader { g in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
-                            Capsule()
-                                .fill(LinearGradient(colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")], startPoint: .leading, endPoint: .trailing))
-                                .frame(width: g.size.width * secProg, height: 3)
-                                .animation(.linear(duration: 1), value: secProg)
-                        }
-                    }
-                    .frame(height: 3)
-                    Text(dateStr)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.28))
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                // Portrait: stacked layout
-                VStack(alignment: .center, spacing: 10) {
-                    Spacer()
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text(h)
-                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00ffc8"))
-                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
-                            .minimumScaleFactor(0.5).lineLimit(1)
-                        Text(":")
-                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00ffc8"))
-                            .opacity(colonOn ? 1 : 0.05).lineLimit(1)
-                        Text(m)
-                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00ffc8"))
-                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
-                            .minimumScaleFactor(0.5).lineLimit(1)
-                        Text(s)
-                            .font(.system(size: secSize, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00aaff"))
-                            .padding(.leading, 6)
-                            .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 10 }
-                            .lineLimit(1)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
                     GeometryReader { g in
                         ZStack(alignment: .leading) {
                             Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
@@ -529,11 +477,11 @@ struct ClockView: View {
                     Text(dateStr)
                         .font(.system(size: 12, weight: .regular, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.28))
-                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .lineLimit(1).minimumScaleFactor(0.5)
                         .frame(maxWidth: .infinity, alignment: .center)
                     Spacer()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: geo.size.width, height: geo.size.height)
             }
         }
         .onReceive(timer) { t in
@@ -615,8 +563,8 @@ struct WeatherWidgetView: View {
                         }
                     }
 
-                    // Spacer pushes forecast to bottom
-                    Spacer()
+                    // Smaller spacer between current weather and forecast
+                    Spacer(minLength: 4)
 
                     if !w.forecast.isEmpty {
                         Rectangle().fill(Color.white.opacity(0.06)).frame(height: 0.5)
