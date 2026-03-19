@@ -36,7 +36,116 @@ struct WeatherData {
     var forecast: [DayForecast] = []
 }
 
-class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+// MARK: - Weather Theme
+enum WeatherCondition {
+    case clearDay, clearSunset, clearNight
+    case cloudy, foggy
+    case rainy, stormy, snowy
+}
+
+struct WeatherTheme {
+    let condition: WeatherCondition
+    let bgTop: Color
+    let bgBottom: Color
+    let accent: Color
+    let accent2: Color
+    let textColor: Color
+    let panelBorder: Color
+    let label: String
+
+    static func from(code: Int, hour: Int) -> WeatherTheme {
+        // Night after 18:00 or before 6:00
+        let isNight = hour >= 18 || hour < 6
+        let isSunset = hour >= 17 && hour < 19
+
+        switch code {
+        case 0, 1: // Clear
+            if isSunset {
+                return WeatherTheme(
+                    condition: .clearSunset,
+                    bgTop: Color(hex: "0d1a2e"), bgBottom: Color(hex: "c4783a"),
+                    accent: Color(hex: "ffcc44"), accent2: Color(hex: "ff9922"),
+                    textColor: Color(hex: "fff8e8"), panelBorder: Color(hex: "ffcc44").opacity(0.2),
+                    label: "GOLDEN HOUR")
+            } else if isNight {
+                return WeatherTheme(
+                    condition: .clearNight,
+                    bgTop: Color(hex: "020810"), bgBottom: Color(hex: "0a2838"),
+                    accent: Color(hex: "c8e8ff"), accent2: Color(hex: "4488bb"),
+                    textColor: Color(hex: "c8e8ff"), panelBorder: Color(hex: "0088cc").opacity(0.2),
+                    label: "MIDNIGHT SEA")
+            } else {
+                return WeatherTheme(
+                    condition: .clearDay,
+                    bgTop: Color(hex: "040e1a"), bgBottom: Color(hex: "0d6050"),
+                    accent: Color(hex: "00dca0"), accent2: Color(hex: "00aacc"),
+                    textColor: Color(hex: "e0fff8"), panelBorder: Color(hex: "00dca0").opacity(0.15),
+                    label: "TROPICAL")
+            }
+        case 2, 3: // Cloudy
+            return WeatherTheme(
+                condition: .cloudy,
+                bgTop: Color(hex: "080c12"), bgBottom: Color(hex: "101820"),
+                accent: Color(hex: "8899bb"), accent2: Color(hex: "667799"),
+                textColor: Color(hex: "c8d8e8"), panelBorder: Color(hex: "8899bb").opacity(0.15),
+                label: "OVERCAST")
+        case 45, 48: // Fog
+            return WeatherTheme(
+                condition: .foggy,
+                bgTop: Color(hex: "0a0c10"), bgBottom: Color(hex: "141820"),
+                accent: Color(hex: "99aabb"), accent2: Color(hex: "778899"),
+                textColor: Color(hex: "d0d8e0"), panelBorder: Color(hex: "99aabb").opacity(0.12),
+                label: "MISTY")
+        case 51, 53, 55, 61, 63, 65, 80, 81, 82: // Rain
+            return WeatherTheme(
+                condition: .rainy,
+                bgTop: Color(hex: "050810"), bgBottom: Color(hex: "081016"),
+                accent: Color(hex: "6699dd"), accent2: Color(hex: "4477bb"),
+                textColor: Color(hex: "c8d8ff"), panelBorder: Color(hex: "6699dd").opacity(0.2),
+                label: "RAINY")
+        case 71, 73, 75, 77, 85, 86: // Snow
+            return WeatherTheme(
+                condition: .snowy,
+                bgTop: Color(hex: "060810"), bgBottom: Color(hex: "0a1020"),
+                accent: Color(hex: "aaccff"), accent2: Color(hex: "88aadd"),
+                textColor: Color(hex: "ddeeff"), panelBorder: Color(hex: "aaccff").opacity(0.2),
+                label: "SNOWY")
+        case 95, 96, 99: // Storm
+            return WeatherTheme(
+                condition: .stormy,
+                bgTop: Color(hex: "040608"), bgBottom: Color(hex: "0a0e18"),
+                accent: Color(hex: "aabbdd"), accent2: Color(hex: "6688cc"),
+                textColor: Color(hex: "c0d0ee"), panelBorder: Color(hex: "aabbdd").opacity(0.2),
+                label: "STORM")
+        default:
+            return WeatherTheme(
+                condition: .cloudy,
+                bgTop: Color(hex: "060a0f"), bgBottom: Color(hex: "0a1020"),
+                accent: Color(hex: "00ffc8"), accent2: Color(hex: "00aaff"),
+                textColor: .white, panelBorder: Color(hex: "00ffc8").opacity(0.18),
+                label: "")
+        }
+    }
+}
+
+// Shared observable theme
+class ThemeManager: ObservableObject {
+    static let shared = ThemeManager()
+    @Published var theme: WeatherTheme = WeatherTheme.from(code: 0, hour: Calendar.current.component(.hour, from: Date()))
+    @Published var weatherCode: Int = 0
+
+    func update(code: Int) {
+        weatherCode = code
+        let hour = Calendar.current.component(.hour, from: Date())
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 2.0)) {
+                self.theme = WeatherTheme.from(code: code, hour: hour)
+            }
+        }
+    }
+}
+
+
     @Published var weather: WeatherData? = nil
     @Published var status: String = "Locating..."
     @Published var city: String = ""
@@ -125,6 +234,7 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     city: self.weather?.city ?? "", forecast: forecast
                 )
                 self.status = "ok"
+                ThemeManager.shared.update(code: code)
             }
         }.resume()
     }
@@ -388,19 +498,28 @@ struct DashboardApp: App {
 // MARK: - Content View
 struct ContentView: View {
     @StateObject private var alarmMgr = AlarmManager.shared
+    @StateObject private var themeMgr = ThemeManager.shared
 
     var body: some View {
         GeometryReader { geo in
             let isLandscape = geo.size.width > geo.size.height
             ZStack {
-                Color(hex: "060a0f").ignoresSafeArea()
+                // Dynamic animated background
+                LinearGradient(
+                    colors: [themeMgr.theme.bgTop, themeMgr.theme.bgBottom],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 2), value: themeMgr.theme.label)
+
+                // Weather-specific background animation
+                WeatherBackgroundView(condition: themeMgr.theme.condition)
+                    .ignoresSafeArea()
 
                 VStack(spacing: 10) {
-                    // TOP: Clock
                     ClockView(compact: isLandscape)
                         .frame(height: isLandscape ? geo.size.height * 0.50 : geo.size.height * 0.50)
 
-                    // BOTTOM: Calendar+Weather | Todo
                     HStack(spacing: 10) {
                         CalendarWeatherView(compact: isLandscape)
                             .frame(width: geo.size.width * 0.48)
@@ -420,11 +539,240 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Weather Background Animations
+struct WeatherBackgroundView: View {
+    let condition: WeatherCondition
+    @State private var animate = false
+
+    var body: some View {
+        ZStack {
+            switch condition {
+            case .rainy:
+                RainView()
+            case .stormy:
+                StormView()
+            case .snowy:
+                SnowView()
+            case .clearDay, .clearSunset:
+                OceanWaveView(color: condition == .clearSunset ? Color(hex: "c4783a") : Color(hex: "00dca0"))
+            case .clearNight:
+                StarfieldView()
+            case .foggy:
+                FogView()
+            case .cloudy:
+                CloudyView()
+            }
+        }
+    }
+}
+
+// MARK: - Rain Animation
+struct RainView: View {
+    let drops = (0..<80).map { _ in RainDrop() }
+    var body: some View {
+        TimelineView(.animation) { _ in
+            Canvas { ctx, size in
+                for drop in drops {
+                    let progress = (Date().timeIntervalSince1970.truncatingRemainder(dividingBy: drop.duration)) / drop.duration
+                    let x = drop.x * size.width
+                    let y = progress * (size.height + 40) - 20
+                    var path = Path()
+                    path.move(to: CGPoint(x: x, y: y))
+                    path.addLine(to: CGPoint(x: x - 1, y: y + drop.length))
+                    ctx.stroke(path, with: .color(.white.opacity(drop.opacity)), lineWidth: drop.width)
+                }
+            }
+        }
+    }
+}
+
+struct RainDrop {
+    let x = Double.random(in: 0...1)
+    let length = Double.random(in: 12...28)
+    let duration = Double.random(in: 0.4...1.0)
+    let opacity = Double.random(in: 0.15...0.45)
+    let width = Double.random(in: 0.5...1.5)
+}
+
+// MARK: - Storm Animation
+struct StormView: View {
+    @State private var flash = false
+    var body: some View {
+        ZStack {
+            RainView()
+            // Lightning flash
+            Color.white.opacity(flash ? 0.12 : 0)
+                .ignoresSafeArea()
+                .onAppear {
+                    Timer.scheduledTimer(withTimeInterval: Double.random(in: 3...7), repeats: true) { _ in
+                        withAnimation(.easeIn(duration: 0.05)) { flash = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            withAnimation(.easeOut(duration: 0.1)) { flash = false }
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            withAnimation(.easeIn(duration: 0.05)) { flash = true }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                withAnimation { flash = false }
+                            }
+                        }
+                    }
+                }
+        }
+    }
+}
+
+// MARK: - Snow Animation
+struct SnowView: View {
+    let flakes = (0..<50).map { _ in SnowFlake() }
+    var body: some View {
+        TimelineView(.animation) { _ in
+            Canvas { ctx, size in
+                for flake in flakes {
+                    let t = Date().timeIntervalSince1970
+                    let progress = (t.truncatingRemainder(dividingBy: flake.duration)) / flake.duration
+                    let drift = sin(t * flake.driftSpeed + flake.driftOffset) * 20
+                    let x = flake.x * size.width + drift
+                    let y = progress * (size.height + 20) - 10
+                    let rect = CGRect(x: x - flake.size/2, y: y - flake.size/2, width: flake.size, height: flake.size)
+                    ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(flake.opacity)))
+                }
+            }
+        }
+    }
+}
+
+struct SnowFlake {
+    let x = Double.random(in: 0...1)
+    let size = Double.random(in: 2...6)
+    let duration = Double.random(in: 4...10)
+    let opacity = Double.random(in: 0.2...0.6)
+    let driftSpeed = Double.random(in: 0.5...1.5)
+    let driftOffset = Double.random(in: 0...6.28)
+}
+
+// MARK: - Ocean Wave Animation
+struct OceanWaveView: View {
+    let color: Color
+    @State private var phase: Double = 0
+    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .bottom) {
+                // Wave 1
+                WaveShape(phase: phase, amplitude: 8, frequency: 1.2)
+                    .fill(color.opacity(0.12))
+                    .frame(height: 60)
+                // Wave 2
+                WaveShape(phase: phase + 1.5, amplitude: 6, frequency: 0.9)
+                    .fill(color.opacity(0.08))
+                    .frame(height: 50)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        }
+        .onReceive(timer) { _ in phase += 0.04 }
+    }
+}
+
+struct WaveShape: Shape {
+    var phase: Double
+    var amplitude: Double
+    var frequency: Double
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 0, y: rect.height))
+        for x in stride(from: 0, to: rect.width, by: 2) {
+            let y = amplitude * sin(frequency * x / rect.width * 2 * .pi + phase) + rect.height * 0.5
+            path.addLine(to: CGPoint(x: x, y: y))
+        }
+        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Starfield Animation
+struct StarfieldView: View {
+    let stars = (0..<60).map { _ in Star() }
+    var body: some View {
+        TimelineView(.animation) { tl in
+            Canvas { ctx, size in
+                for star in stars {
+                    let pulse = 0.4 + 0.6 * abs(sin(tl.date.timeIntervalSince1970 * star.speed + star.offset))
+                    let rect = CGRect(x: star.x * size.width - star.size/2,
+                                      y: star.y * size.height - star.size/2,
+                                      width: star.size, height: star.size)
+                    ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(pulse * star.opacity)))
+                }
+            }
+        }
+    }
+}
+
+struct Star {
+    let x = Double.random(in: 0...1)
+    let y = Double.random(in: 0...0.6)
+    let size = Double.random(in: 1...3)
+    let opacity = Double.random(in: 0.3...0.8)
+    let speed = Double.random(in: 0.3...1.2)
+    let offset = Double.random(in: 0...6.28)
+}
+
+// MARK: - Fog Animation
+struct FogView: View {
+    @State private var offset: CGFloat = 0
+    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(0..<3, id: \.self) { i in
+                    Ellipse()
+                        .fill(Color.white.opacity(0.03))
+                        .frame(width: geo.size.width * 1.4, height: 120)
+                        .offset(x: offset + CGFloat(i) * 60 - 100,
+                                y: geo.size.height * 0.3 + CGFloat(i) * 60)
+                        .blur(radius: 30)
+                }
+            }
+        }
+        .onReceive(timer) { _ in
+            offset += 0.3
+            if offset > 200 { offset = 0 }
+        }
+    }
+}
+
+// MARK: - Cloudy Animation
+struct CloudyView: View {
+    @State private var offset: CGFloat = 0
+    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(0..<4, id: \.self) { i in
+                    Ellipse()
+                        .fill(Color.white.opacity(0.025))
+                        .frame(width: CGFloat(180 + i * 40), height: 60)
+                        .offset(x: offset * (i % 2 == 0 ? 1 : -1) + CGFloat(i * 80 - 100),
+                                y: geo.size.height * 0.15 + CGFloat(i * 35))
+                        .blur(radius: 20)
+                }
+            }
+        }
+        .onReceive(timer) { _ in
+            offset += 0.15
+            if offset > 300 { offset = 0 }
+        }
+    }
+}
+
 // MARK: - Clock
 struct ClockView: View {
     var compact: Bool = false
     @State private var now = Date()
     @State private var colonOn = true
+    @StateObject private var themeMgr = ThemeManager.shared
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var h: String { String(format: "%02d", Calendar.current.component(.hour, from: now)) }
@@ -441,25 +789,30 @@ struct ClockView: View {
     var secSize: CGFloat { compact ? 36 : 32 }
 
     var body: some View {
-        PanelView(accent: Color(hex: "00ffc8")) {
+        PanelView {
             GeometryReader { geo in
                 VStack(spacing: 6) {
                     Spacer()
-                    // Clock scales to fill available width
+                    // Theme label
+                    if !themeMgr.theme.label.isEmpty {
+                        Text(themeMgr.theme.label)
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundColor(themeMgr.theme.accent.opacity(0.4))
+                            .tracking(3)
+                    }
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
                         Spacer()
                         Text("\(h):\(m)")
                             .font(.system(size: 999, weight: .bold, design: .monospaced))
                             .minimumScaleFactor(0.01)
                             .lineLimit(1)
-                            .foregroundColor(Color(hex: "00ffc8"))
-                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 16)
+                            .foregroundColor(themeMgr.theme.accent)
+                            .shadow(color: themeMgr.theme.accent.opacity(0.4), radius: 16)
                             .frame(width: geo.size.width * 0.78)
-                            .opacity(colonOn ? 1 : 1) // always show HH:MM
-                        // Blinking colon overlay hack — use ZStack
+                            .animation(.easeInOut(duration: 2), value: themeMgr.theme.label)
                         Text(s)
                             .font(.system(size: geo.size.height * 0.30, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(hex: "00aaff"))
+                            .foregroundColor(themeMgr.theme.accent2)
                             .frame(width: geo.size.width * 0.18)
                             .padding(.bottom, geo.size.height * 0.08)
                         Spacer()
@@ -468,7 +821,9 @@ struct ClockView: View {
                         ZStack(alignment: .leading) {
                             Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
                             Capsule()
-                                .fill(LinearGradient(colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")], startPoint: .leading, endPoint: .trailing))
+                                .fill(LinearGradient(
+                                    colors: [themeMgr.theme.accent2, themeMgr.theme.accent],
+                                    startPoint: .leading, endPoint: .trailing))
                                 .frame(width: g.size.width * secProg, height: 3)
                                 .animation(.linear(duration: 1), value: secProg)
                         }
@@ -476,7 +831,7 @@ struct ClockView: View {
                     .frame(height: 3)
                     Text(dateStr)
                         .font(.system(size: 12, weight: .regular, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.28))
+                        .foregroundColor(themeMgr.theme.textColor.opacity(0.35))
                         .lineLimit(1).minimumScaleFactor(0.5)
                         .frame(maxWidth: .infinity, alignment: .center)
                     Spacer()
@@ -487,6 +842,10 @@ struct ClockView: View {
         .onReceive(timer) { t in
             now = t
             colonOn = Calendar.current.component(.second, from: t) % 2 == 0
+            // Update theme every minute in case hour changed
+            if Calendar.current.component(.second, from: t) == 0 {
+                ThemeManager.shared.update(code: ThemeManager.shared.weatherCode)
+            }
         }
     }
 }
@@ -703,7 +1062,7 @@ struct CalendarWeatherView: View {
     @StateObject private var weather = WeatherManager()
 
     var body: some View {
-        PanelView(accent: Color(hex: "00aaff")) {
+        PanelView() {
             VStack(spacing: compact ? 6 : 10) {
                 // Calendar — fixed size
                 CalendarView(compact: compact)
@@ -753,7 +1112,7 @@ struct TodoView: View {
     }
 
     var body: some View {
-        PanelView(accent: Color(hex: "00ffc8")) {
+        PanelView() {
             VStack(spacing: 8) {
                 // Header
                 HStack {
@@ -1098,16 +1457,19 @@ struct AlarmPopupView: View {
 
 // MARK: - Panel View
 struct PanelView<Content: View>: View {
-    let accent: Color
+    var accent: Color? = nil
     @ViewBuilder let content: () -> Content
+    @StateObject private var themeMgr = ThemeManager.shared
+
+    var effectiveAccent: Color { accent ?? themeMgr.theme.accent }
 
     var body: some View {
         ZStack(alignment: .top) {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.white.opacity(0.04))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(accent.opacity(0.18), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(effectiveAccent.opacity(0.22), lineWidth: 1))
             GeometryReader { g in
-                LinearGradient(colors: [.clear, accent, .clear], startPoint: .leading, endPoint: .trailing)
+                LinearGradient(colors: [.clear, effectiveAccent, .clear], startPoint: .leading, endPoint: .trailing)
                     .frame(width: g.size.width * 0.7, height: 1)
                     .position(x: g.size.width / 2, y: 0)
                     .opacity(0.5)
@@ -1117,6 +1479,7 @@ struct PanelView<Content: View>: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeInOut(duration: 2), value: effectiveAccent.description)
     }
 }
 
