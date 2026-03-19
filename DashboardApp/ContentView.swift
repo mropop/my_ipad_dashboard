@@ -396,9 +396,9 @@ struct ContentView: View {
                 Color(hex: "060a0f").ignoresSafeArea()
 
                 VStack(spacing: 10) {
-                    // TOP: Clock — compact in landscape, tall in portrait
+                    // TOP: Clock
                     ClockView(compact: isLandscape)
-                        .frame(height: isLandscape ? geo.size.height * 0.30 : geo.size.height * 0.45)
+                        .frame(height: isLandscape ? geo.size.height * 0.40 : geo.size.height * 0.45)
 
                     // BOTTOM: Calendar+Weather | Todo
                     HStack(spacing: 10) {
@@ -437,8 +437,8 @@ struct ClockView: View {
         return f.string(from: now).uppercased()
     }
 
-    var clockSize: CGFloat { compact ? 96 : 110 }
-    var secSize: CGFloat { compact ? 28 : 32 }
+    var clockSize: CGFloat { compact ? 120 : 110 }
+    var secSize: CGFloat { compact ? 36 : 32 }
 
     var body: some View {
         PanelView(accent: Color(hex: "00ffc8")) {
