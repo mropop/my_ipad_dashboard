@@ -3,8 +3,8 @@ import AudioToolbox
 import AVFoundation
 
 // MARK: - Config
-let FIREBASE_URL = "__FIREBASE_URL__"
-let FIREBASE_KEY = "__FIREBASE_KEY__"
+let FIREBASE_URL = "https://my-todo-list-b567a-default-rtdb.asia-southeast1.firebasedatabase.app"
+let FIREBASE_KEY = "AIzaSyDHKPTvVmsPsnd_em1al9YVzla5dMD56oA"
 
 // MARK: - Task Model
 struct Task: Identifiable, Codable, Equatable {
