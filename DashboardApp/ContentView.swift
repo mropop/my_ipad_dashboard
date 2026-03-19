@@ -146,6 +146,7 @@ class ThemeManager: ObservableObject {
 }
 
 
+class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var weather: WeatherData? = nil
     @Published var status: String = "Locating..."
     @Published var city: String = ""
