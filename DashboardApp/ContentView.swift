@@ -391,25 +391,25 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
             ZStack {
                 Color(hex: "060a0f").ignoresSafeArea()
 
-                VStack(spacing: 12) {
-                    // TOP: Big clock
-                    ClockView()
-                        .frame(height: geo.size.height * 0.52)
+                VStack(spacing: 10) {
+                    // TOP: Clock — compact in landscape, tall in portrait
+                    ClockView(compact: isLandscape)
+                        .frame(height: isLandscape ? geo.size.height * 0.38 : geo.size.height * 0.52)
 
                     // BOTTOM: Calendar+Weather | Todo
-                    HStack(spacing: 12) {
-                        CalendarWeatherView()
+                    HStack(spacing: 10) {
+                        CalendarWeatherView(compact: isLandscape)
                             .frame(width: geo.size.width * 0.48)
                         TodoView()
                     }
                     .frame(maxHeight: .infinity)
                 }
-                .padding(12)
+                .padding(10)
 
-                // Alarm popup
                 if let alarm = alarmMgr.firingAlarm {
                     AlarmPopupView(task: alarm) {
                         alarmMgr.firingAlarm = nil
@@ -422,6 +422,7 @@ struct ContentView: View {
 
 // MARK: - Clock
 struct ClockView: View {
+    var compact: Bool = false
     @State private var now = Date()
     @State private var colonOn = true
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -432,70 +433,111 @@ struct ClockView: View {
     var secProg: Double { Double(Calendar.current.component(.second, from: now)) / 59.0 }
     var dateStr: String {
         let f = DateFormatter()
-        f.dateFormat = "EEEE  ·  MMMM d, yyyy"
+        f.dateFormat = compact ? "EEE · MMM d, yyyy" : "EEEE  ·  MMMM d, yyyy"
         return f.string(from: now).uppercased()
     }
 
+    var clockSize: CGFloat { compact ? 72 : 110 }
+    var secSize: CGFloat { compact ? 22 : 32 }
+
     var body: some View {
         PanelView(accent: Color(hex: "00ffc8")) {
-            VStack(alignment: .center, spacing: 10) {
-                Spacer()
+            if compact {
+                // Landscape: clock + date side by side
+                HStack(alignment: .center, spacing: 16) {
+                    // Time
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(h)
+                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00ffc8"))
+                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 14)
+                            .minimumScaleFactor(0.5).lineLimit(1)
+                        Text(":")
+                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00ffc8"))
+                            .opacity(colonOn ? 1 : 0.05).lineLimit(1)
+                        Text(m)
+                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00ffc8"))
+                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 14)
+                            .minimumScaleFactor(0.5).lineLimit(1)
+                        Text(s)
+                            .font(.system(size: secSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00aaff"))
+                            .padding(.leading, 4)
+                            .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 8 }
+                            .lineLimit(1)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
 
-                // Big time — centered
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(h)
-                        .font(.system(size: 110, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "00ffc8"))
-                        .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
-                        .minimumScaleFactor(0.5)
-                        .lineLimit(1)
-                    Text(":")
-                        .font(.system(size: 110, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "00ffc8"))
-                        .opacity(colonOn ? 1 : 0.05)
-                        .lineLimit(1)
-                    Text(m)
-                        .font(.system(size: 110, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "00ffc8"))
-                        .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
-                        .minimumScaleFactor(0.5)
-                        .lineLimit(1)
-                    Text(s)
-                        .font(.system(size: 32, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "00aaff"))
-                        .shadow(color: Color(hex: "00aaff").opacity(0.3), radius: 8)
-                        .padding(.leading, 6)
-                        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 10 }
-                        .lineLimit(1)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-
-                // Seconds bar
-                GeometryReader { g in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
-                        Capsule()
-                            .fill(LinearGradient(
-                                colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")],
-                                startPoint: .leading, endPoint: .trailing
-                            ))
-                            .frame(width: g.size.width * secProg, height: 3)
-                            .animation(.linear(duration: 1), value: secProg)
+                    // Date + bar
+                    VStack(alignment: .leading, spacing: 6) {
+                        Spacer()
+                        Text(dateStr)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.28))
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
+                                Capsule()
+                                    .fill(LinearGradient(colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")], startPoint: .leading, endPoint: .trailing))
+                                    .frame(width: g.size.width * secProg, height: 3)
+                                    .animation(.linear(duration: 1), value: secProg)
+                            }
+                        }
+                        .frame(height: 3)
+                        Spacer()
                     }
                 }
-                .frame(height: 3)
-
-                // Date
-                Text(dateStr)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.28))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                Spacer()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, 4)
+            } else {
+                // Portrait: stacked layout
+                VStack(alignment: .center, spacing: 10) {
+                    Spacer()
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(h)
+                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00ffc8"))
+                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
+                            .minimumScaleFactor(0.5).lineLimit(1)
+                        Text(":")
+                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00ffc8"))
+                            .opacity(colonOn ? 1 : 0.05).lineLimit(1)
+                        Text(m)
+                            .font(.system(size: clockSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00ffc8"))
+                            .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
+                            .minimumScaleFactor(0.5).lineLimit(1)
+                        Text(s)
+                            .font(.system(size: secSize, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: "00aaff"))
+                            .padding(.leading, 6)
+                            .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 10 }
+                            .lineLimit(1)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
+                            Capsule()
+                                .fill(LinearGradient(colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")], startPoint: .leading, endPoint: .trailing))
+                                .frame(width: g.size.width * secProg, height: 3)
+                                .animation(.linear(duration: 1), value: secProg)
+                        }
+                    }
+                    .frame(height: 3)
+                    Text(dateStr)
+                        .font(.system(size: 12, weight: .regular, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.28))
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onReceive(timer) { t in
             now = t
@@ -507,104 +549,89 @@ struct ClockView: View {
 // MARK: - Weather Widget
 struct WeatherWidgetView: View {
     @ObservedObject var manager: WeatherManager
+    var compact: Bool = false
 
     var body: some View {
         Group {
             if let w = manager.weather {
-                VStack(spacing: 8) {
-                    // Current weather row
-                    HStack(alignment: .center, spacing: 10) {
-                        // Icon
+                VStack(spacing: compact ? 5 : 8) {
+                    HStack(alignment: .center, spacing: 8) {
                         Image(systemName: w.icon)
-                            .font(.system(size: 32))
+                            .font(.system(size: compact ? 24 : 32))
                             .foregroundColor(iconColor(w.icon))
-                            .frame(width: 40)
-
-                        // Temp + desc
+                            .frame(width: compact ? 30 : 40)
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(alignment: .firstTextBaseline, spacing: 3) {
                                 Text(String(format: "%.0f°", w.temp))
-                                    .font(.system(size: 36, weight: .bold, design: .monospaced))
+                                    .font(.system(size: compact ? 26 : 36, weight: .bold, design: .monospaced))
                                     .foregroundColor(.white)
                                 Text("C")
-                                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                                    .font(.system(size: compact ? 11 : 14, weight: .medium, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.35))
-                                    .alignmentGuide(.firstTextBaseline) { d in d[.bottom] }
                             }
                             Text(w.description.uppercased())
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: compact ? 8 : 9, weight: .medium, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.4))
                                 .tracking(1)
                         }
-
                         Spacer()
-
-                        // City + extra info
-                        VStack(alignment: .trailing, spacing: 4) {
+                        VStack(alignment: .trailing, spacing: compact ? 2 : 4) {
                             let cityName = manager.city.isEmpty ? w.city : manager.city
                             if !cityName.isEmpty {
                                 HStack(spacing: 3) {
                                     Image(systemName: "location.fill")
-                                        .font(.system(size: 9))
+                                        .font(.system(size: 8))
                                         .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
                                     Text(cityName)
-                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                        .font(.system(size: compact ? 9 : 11, weight: .medium, design: .monospaced))
                                         .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
                                         .lineLimit(1)
                                 }
                             }
-                            // Feels like
                             HStack(spacing: 3) {
                                 Image(systemName: "thermometer.medium")
-                                    .font(.system(size: 9))
+                                    .font(.system(size: 8))
                                     .foregroundColor(.white.opacity(0.3))
                                 Text(String(format: "Feels %.0f°", w.feelsLike))
-                                    .font(.system(size: 9, design: .monospaced))
+                                    .font(.system(size: compact ? 8 : 9, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.3))
                             }
-                            // Humidity + wind
-                            HStack(spacing: 8) {
+                            HStack(spacing: compact ? 5 : 8) {
                                 HStack(spacing: 2) {
                                     Image(systemName: "humidity.fill")
-                                        .font(.system(size: 9))
+                                        .font(.system(size: 8))
                                         .foregroundColor(Color(hex: "00aaff").opacity(0.6))
                                     Text("\(w.humidity)%")
-                                        .font(.system(size: 9, design: .monospaced))
+                                        .font(.system(size: compact ? 8 : 9, design: .monospaced))
                                         .foregroundColor(Color(hex: "00aaff").opacity(0.6))
                                 }
                                 HStack(spacing: 2) {
                                     Image(systemName: "wind")
-                                        .font(.system(size: 9))
+                                        .font(.system(size: 8))
                                         .foregroundColor(.white.opacity(0.3))
                                     Text(String(format: "%.0fkm/h", w.windSpeed))
-                                        .font(.system(size: 9, design: .monospaced))
+                                        .font(.system(size: compact ? 8 : 9, design: .monospaced))
                                         .foregroundColor(.white.opacity(0.3))
                                 }
                             }
                         }
                     }
-
-                    // Divider
                     if !w.forecast.isEmpty {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.06))
-                            .frame(height: 0.5)
-
-                        // 5-day forecast
+                        Rectangle().fill(Color.white.opacity(0.06)).frame(height: 0.5)
                         HStack(spacing: 4) {
                             ForEach(w.forecast) { day in
-                                VStack(spacing: 3) {
+                                VStack(spacing: compact ? 1 : 3) {
                                     Text(day.date)
-                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                        .font(.system(size: compact ? 7 : 8, weight: .medium, design: .monospaced))
                                         .foregroundColor(.white.opacity(0.35))
                                     Image(systemName: day.icon)
-                                        .font(.system(size: 14))
+                                        .font(.system(size: compact ? 11 : 14))
                                         .foregroundColor(iconColor(day.icon))
                                     Text(String(format: "%.0f°", day.high))
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .font(.system(size: compact ? 9 : 10, weight: .bold, design: .monospaced))
                                         .foregroundColor(.white.opacity(0.8))
                                     Text(String(format: "%.0f°", day.low))
-                                        .font(.system(size: 9, design: .monospaced))
+                                        .font(.system(size: compact ? 8 : 9, design: .monospaced))
                                         .foregroundColor(.white.opacity(0.3))
                                 }
                                 .frame(maxWidth: .infinity)
@@ -612,21 +639,21 @@ struct WeatherWidgetView: View {
                         }
                     }
                 }
-                .padding(10)
+                .padding(compact ? 7 : 10)
                 .background(Color.white.opacity(0.04))
                 .cornerRadius(10)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "location.circle")
-                        .font(.system(size: 14))
+                        .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.2))
                     Text(manager.status.uppercased())
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.white.opacity(0.2))
                         .tracking(1)
                 }
-                .padding(10)
+                .padding(compact ? 7 : 10)
                 .background(Color.white.opacity(0.03))
                 .cornerRadius(10)
             }
@@ -645,14 +672,19 @@ struct WeatherWidgetView: View {
 
 // MARK: - Calendar
 struct CalendarView: View {
+    var compact: Bool = false
     @State private var display = Date()
-    private let cols = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
+    private let cols = Array(repeating: GridItem(.flexible(), spacing: 1), count: 7)
     private let dn = ["Su","Mo","Tu","We","Th","Fr","Sa"]
 
     var label: String {
-        let f = DateFormatter(); f.dateFormat = "MMMM yyyy"
+        let f = DateFormatter()
+        f.dateFormat = compact ? "MMM yyyy" : "MMMM yyyy"
         return f.string(from: display).uppercased()
     }
+
+    var cellSize: CGFloat { compact ? 18 : 22 }
+    var fontSize: CGFloat { compact ? 9 : 10 }
 
     var days: [(Int, Bool, Bool)] {
         let cal = Calendar.current
@@ -673,47 +705,47 @@ struct CalendarView: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: compact ? 4 : 6) {
             HStack {
                 Text(label)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.system(size: compact ? 10 : 11, weight: .bold, design: .monospaced))
                     .foregroundColor(Color(hex: "00aaff"))
                 Spacer()
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     Button { display = Calendar.current.date(byAdding: .month, value: -1, to: display)! } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: compact ? 10 : 12, weight: .semibold))
                             .foregroundColor(Color(hex: "00aaff"))
-                            .frame(width: 26, height: 26)
+                            .frame(width: compact ? 20 : 26, height: compact ? 20 : 26)
                             .background(Color(hex: "00aaff").opacity(0.1))
-                            .cornerRadius(6)
+                            .cornerRadius(5)
                     }
                     Button { display = Calendar.current.date(byAdding: .month, value: 1, to: display)! } label: {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: compact ? 10 : 12, weight: .semibold))
                             .foregroundColor(Color(hex: "00aaff"))
-                            .frame(width: 26, height: 26)
+                            .frame(width: compact ? 20 : 26, height: compact ? 20 : 26)
                             .background(Color(hex: "00aaff").opacity(0.1))
-                            .cornerRadius(6)
+                            .cornerRadius(5)
                     }
                 }
             }
-            LazyVGrid(columns: cols, spacing: 2) {
+            LazyVGrid(columns: cols, spacing: 1) {
                 ForEach(dn, id: \.self) { d in
                     Text(d)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: compact ? 8 : 9, weight: .semibold))
                         .foregroundColor(.white.opacity(0.3))
                 }
                 ForEach(Array(days.enumerated()), id: \.offset) { _, day in
                     ZStack {
                         if day.2 {
-                            Circle().fill(Color(hex: "00ffc8")).frame(width: 22, height: 22)
+                            Circle().fill(Color(hex: "00ffc8")).frame(width: cellSize, height: cellSize)
                         }
                         Text("\(day.0)")
-                            .font(.system(size: 10, weight: day.2 ? .bold : .regular))
+                            .font(.system(size: fontSize, weight: day.2 ? .bold : .regular))
                             .foregroundColor(day.2 ? Color(hex: "060a0f") : day.1 ? .white.opacity(0.55) : .white.opacity(0.15))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 22)
+                    .frame(maxWidth: .infinity, minHeight: cellSize)
                 }
             }
         }
@@ -722,28 +754,23 @@ struct CalendarView: View {
 
 // MARK: - Calendar + Weather combined
 struct CalendarWeatherView: View {
+    var compact: Bool = false
     @StateObject private var weather = WeatherManager()
 
     var body: some View {
         PanelView(accent: Color(hex: "00aaff")) {
-            VStack(spacing: 10) {
-                // Calendar section
-                CalendarView()
-                    .background(Color.clear)
-
-                // Divider
+            VStack(spacing: compact ? 6 : 10) {
+                CalendarView(compact: compact)
                 Rectangle()
                     .fill(Color.white.opacity(0.08))
                     .frame(height: 0.5)
-
-                // Weather section
-                VStack(spacing: 6) {
+                VStack(spacing: 4) {
                     Text("WEATHER")
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .font(.system(size: 7, weight: .medium, design: .monospaced))
                         .foregroundColor(Color(hex: "00aaff").opacity(0.4))
                         .tracking(3)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    WeatherWidgetView(manager: weather)
+                    WeatherWidgetView(manager: weather, compact: compact)
                 }
             }
         }
