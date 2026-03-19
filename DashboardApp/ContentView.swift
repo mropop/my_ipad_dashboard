@@ -39,6 +39,7 @@ struct WeatherData {
 class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var weather: WeatherData? = nil
     @Published var status: String = "Locating..."
+    @Published var city: String = ""
     private var locationManager = CLLocationManager()
     private var fetchTimer: Timer?
 
@@ -63,15 +64,20 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard let loc = locations.last else { return }
         locationManager.stopUpdatingLocation()
         fetchWeather(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
-        // Refresh weather every 10 minutes
         fetchTimer?.invalidate()
         fetchTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
             self?.fetchWeather(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
         }
-        // Get city name
+        // Reverse geocode for city name
         CLGeocoder().reverseGeocodeLocation(loc) { [weak self] placemarks, _ in
-            if let city = placemarks?.first?.locality {
-                DispatchQueue.main.async { self?.weather?.city = city }
+            guard let self = self else { return }
+            let name = placemarks?.first?.locality
+                ?? placemarks?.first?.administrativeArea
+                ?? placemarks?.first?.country
+                ?? ""
+            DispatchQueue.main.async {
+                self.city = name
+                self.weather?.city = name  // also update in struct
             }
         }
     }
@@ -388,14 +394,18 @@ struct ContentView: View {
             ZStack {
                 Color(hex: "060a0f").ignoresSafeArea()
 
-                HStack(spacing: 12) {
+                VStack(spacing: 12) {
+                    // TOP: Big clock
                     ClockView()
-                        .frame(width: geo.size.width * 0.45)
-                    VStack(spacing: 12) {
-                        CalendarView()
+                        .frame(height: geo.size.height * 0.52)
+
+                    // BOTTOM: Calendar+Weather | Todo
+                    HStack(spacing: 12) {
+                        CalendarWeatherView()
+                            .frame(width: geo.size.width * 0.48)
                         TodoView()
                     }
-                    .frame(width: geo.size.width * 0.51)
+                    .frame(maxHeight: .infinity)
                 }
                 .padding(12)
 
@@ -414,7 +424,6 @@ struct ContentView: View {
 struct ClockView: View {
     @State private var now = Date()
     @State private var colonOn = true
-    @StateObject private var weather = WeatherManager()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var h: String { String(format: "%02d", Calendar.current.component(.hour, from: now)) }
@@ -429,7 +438,75 @@ struct ClockView: View {
 
     var body: some View {
         PanelView(accent: Color(hex: "00ffc8")) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .center, spacing: 10) {
+                Spacer()
+
+                // Big time — centered
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(h)
+                        .font(.system(size: 110, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "00ffc8"))
+                        .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
+                    Text(":")
+                        .font(.system(size: 110, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "00ffc8"))
+                        .opacity(colonOn ? 1 : 0.05)
+                        .lineLimit(1)
+                    Text(m)
+                        .font(.system(size: 110, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "00ffc8"))
+                        .shadow(color: Color(hex: "00ffc8").opacity(0.4), radius: 18)
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
+                    Text(s)
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "00aaff"))
+                        .shadow(color: Color(hex: "00aaff").opacity(0.3), radius: 8)
+                        .padding(.leading, 6)
+                        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 10 }
+                        .lineLimit(1)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+
+                // Seconds bar
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.06)).frame(height: 3)
+                        Capsule()
+                            .fill(LinearGradient(
+                                colors: [Color(hex: "00aaff"), Color(hex: "00ffc8")],
+                                startPoint: .leading, endPoint: .trailing
+                            ))
+                            .frame(width: g.size.width * secProg, height: 3)
+                            .animation(.linear(duration: 1), value: secProg)
+                    }
+                }
+                .frame(height: 3)
+
+                // Date
+                Text(dateStr)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.28))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onReceive(timer) { t in
+            now = t
+            colonOn = Calendar.current.component(.second, from: t) % 2 == 0
+        }
+    }
+}
+
+    var body: some View {
+        PanelView(accent: Color(hex: "00ffc8")) {
+            VStack(alignment: .leading, spacing: 6) {
 
                 // Label
                 Text("SYSTEM TIME")
@@ -438,30 +515,33 @@ struct ClockView: View {
                     .tracking(3)
 
                 // Big clock — larger than before
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text(h)
-                        .font(.system(size: 86, weight: .bold, design: .monospaced))
+                        .font(.system(size: 76, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00ffc8"))
                         .shadow(color: Color(hex: "00ffc8").opacity(0.45), radius: 16)
-                        .minimumScaleFactor(0.5)
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
                     Text(":")
-                        .font(.system(size: 86, weight: .bold, design: .monospaced))
+                        .font(.system(size: 76, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00ffc8"))
-                        .frame(width: 32, alignment: .center)
                         .opacity(colonOn ? 1 : 0.05)
+                        .lineLimit(1)
                     Text(m)
-                        .font(.system(size: 86, weight: .bold, design: .monospaced))
+                        .font(.system(size: 76, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00ffc8"))
                         .shadow(color: Color(hex: "00ffc8").opacity(0.45), radius: 16)
-                        .minimumScaleFactor(0.5)
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
                     Text(s)
-                        .font(.system(size: 26, weight: .bold, design: .monospaced))
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(hex: "00aaff"))
                         .shadow(color: Color(hex: "00aaff").opacity(0.3), radius: 8)
-                        .padding(.leading, 8)
+                        .padding(.leading, 4)
                         .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 8 }
+                        .lineLimit(1)
                 }
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
 
                 // Seconds bar
                 GeometryReader { g in
@@ -484,8 +564,6 @@ struct ClockView: View {
                     .foregroundColor(Color.white.opacity(0.28))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-
-                Spacer()
 
                 // Weather widget
                 WeatherWidgetView(manager: weather)
@@ -536,12 +614,13 @@ struct WeatherWidgetView: View {
 
                         // City + extra info
                         VStack(alignment: .trailing, spacing: 4) {
-                            if !w.city.isEmpty {
+                            let cityName = manager.city.isEmpty ? w.city : manager.city
+                            if !cityName.isEmpty {
                                 HStack(spacing: 3) {
                                     Image(systemName: "location.fill")
                                         .font(.system(size: 9))
                                         .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
-                                    Text(w.city)
+                                    Text(cityName)
                                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                                         .foregroundColor(Color(hex: "00ffc8").opacity(0.6))
                                         .lineLimit(1)
@@ -667,49 +746,77 @@ struct CalendarView: View {
     }
 
     var body: some View {
-        PanelView(accent: Color(hex: "00aaff")) {
-            VStack(spacing: 6) {
-                HStack {
-                    Text(label)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color(hex: "00aaff"))
-                    Spacer()
-                    HStack(spacing: 4) {
-                        Button { display = Calendar.current.date(byAdding: .month, value: -1, to: display)! } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(Color(hex: "00aaff"))
-                                .frame(width: 26, height: 26)
-                                .background(Color(hex: "00aaff").opacity(0.1))
-                                .cornerRadius(6)
-                        }
-                        Button { display = Calendar.current.date(byAdding: .month, value: 1, to: display)! } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(Color(hex: "00aaff"))
-                                .frame(width: 26, height: 26)
-                                .background(Color(hex: "00aaff").opacity(0.1))
-                                .cornerRadius(6)
-                        }
+        VStack(spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(hex: "00aaff"))
+                Spacer()
+                HStack(spacing: 4) {
+                    Button { display = Calendar.current.date(byAdding: .month, value: -1, to: display)! } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color(hex: "00aaff"))
+                            .frame(width: 26, height: 26)
+                            .background(Color(hex: "00aaff").opacity(0.1))
+                            .cornerRadius(6)
+                    }
+                    Button { display = Calendar.current.date(byAdding: .month, value: 1, to: display)! } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color(hex: "00aaff"))
+                            .frame(width: 26, height: 26)
+                            .background(Color(hex: "00aaff").opacity(0.1))
+                            .cornerRadius(6)
                     }
                 }
-                LazyVGrid(columns: cols, spacing: 2) {
-                    ForEach(dn, id: \.self) { d in
-                        Text(d)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.3))
-                    }
-                    ForEach(Array(days.enumerated()), id: \.offset) { _, day in
-                        ZStack {
-                            if day.2 {
-                                Circle().fill(Color(hex: "00ffc8")).frame(width: 22, height: 22)
-                            }
-                            Text("\(day.0)")
-                                .font(.system(size: 10, weight: day.2 ? .bold : .regular))
-                                .foregroundColor(day.2 ? Color(hex: "060a0f") : day.1 ? .white.opacity(0.55) : .white.opacity(0.15))
+            }
+            LazyVGrid(columns: cols, spacing: 2) {
+                ForEach(dn, id: \.self) { d in
+                    Text(d)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+                ForEach(Array(days.enumerated()), id: \.offset) { _, day in
+                    ZStack {
+                        if day.2 {
+                            Circle().fill(Color(hex: "00ffc8")).frame(width: 22, height: 22)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 22)
+                        Text("\(day.0)")
+                            .font(.system(size: 10, weight: day.2 ? .bold : .regular))
+                            .foregroundColor(day.2 ? Color(hex: "060a0f") : day.1 ? .white.opacity(0.55) : .white.opacity(0.15))
                     }
+                    .frame(maxWidth: .infinity, minHeight: 22)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Calendar + Weather combined
+struct CalendarWeatherView: View {
+    @StateObject private var weather = WeatherManager()
+
+    var body: some View {
+        PanelView(accent: Color(hex: "00aaff")) {
+            VStack(spacing: 10) {
+                // Calendar section
+                CalendarView()
+                    .background(Color.clear)
+
+                // Divider
+                Rectangle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(height: 0.5)
+
+                // Weather section
+                VStack(spacing: 6) {
+                    Text("WEATHER")
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color(hex: "00aaff").opacity(0.4))
+                        .tracking(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    WeatherWidgetView(manager: weather)
                 }
             }
         }
