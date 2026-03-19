@@ -1,5 +1,6 @@
 import SwiftUI
 import AudioToolbox
+import AVFoundation
 
 // MARK: - Config
 let FIREBASE_URL = "https://my-todo-list-b567a-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -13,193 +14,56 @@ struct Task: Identifiable, Codable, Equatable {
     var created: String
 }
 
-// MARK: - EventSource (custom SSE client for iOS)
-class EventSource: NSObject, URLSessionDataDelegate {
-    private var session: URLSession?
-    private var task: URLSessionDataTask?
-    private var buffer = ""
-    private var url: URL
-    var onEvent: ((_ event: String, _ data: String) -> Void)?
-    var onConnect: (() -> Void)?
-    var onDisconnect: (() -> Void)?
-    private var reconnectTimer: Timer?
-    private var isConnecting = false
-
-    init(url: URL) {
-        self.url = url
-        super.init()
-    }
-
-    func connect() {
-        guard !isConnecting else { return }
-        isConnecting = true
-        var req = URLRequest(url: url)
-        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        req.timeoutInterval = TimeInterval(INT_MAX)
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = TimeInterval(INT_MAX)
-        config.timeoutIntervalForResource = TimeInterval(INT_MAX)
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue())
-        task = session?.dataTask(with: req)
-        task?.resume()
-    }
-
-    func disconnect() {
-        reconnectTimer?.invalidate()
-        task?.cancel()
-        session?.invalidateAndCancel()
-        isConnecting = false
-    }
-
-    // URLSessionDataDelegate
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        DispatchQueue.main.async { self.onConnect?() }
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard let text = String(data: data, encoding: .utf8) else { return }
-        buffer += text
-        // SSE events are separated by \n\n
-        while let range = buffer.range(of: "\n\n") {
-            let event = String(buffer[buffer.startIndex..<range.lowerBound])
-            buffer = String(buffer[range.upperBound...])
-            parseEvent(event)
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        isConnecting = false
-        DispatchQueue.main.async { self.onDisconnect?() }
-        // Auto reconnect after 3s
-        reconnectTimer?.invalidate()
-        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
-            self?.buffer = ""
-            self?.connect()
-        }
-    }
-
-    private func parseEvent(_ raw: String) {
-        var eventType = "put"
-        var dataStr = ""
-        for line in raw.components(separatedBy: "\n") {
-            if line.hasPrefix("event:") {
-                eventType = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
-            } else if line.hasPrefix("data:") {
-                dataStr = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            }
-        }
-        if !dataStr.isEmpty {
-            DispatchQueue.main.async { self.onEvent?(eventType, dataStr) }
-        }
-    }
-}
-
-// MARK: - Firebase Manager (SSE realtime)
+// MARK: - Firebase Manager (reliable polling)
 class FirebaseManager: ObservableObject {
     @Published var tasks: [Task] = []
     @Published var connected = false
-    private var eventSource: EventSource?
+    private var timer: Timer?
 
-    init() { startSSE() }
+    init() {
+        fetch()
+        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.fetch()
+        }
+        RunLoop.main.add(timer!, forMode: .common)
+    }
 
-    func startSSE() {
+    func fetch() {
         guard let url = URL(string: "\(FIREBASE_URL)/tasks.json") else { return }
-        eventSource = EventSource(url: url)
-
-        eventSource?.onConnect = { [weak self] in
-            DispatchQueue.main.async { self?.connected = true }
-        }
-
-        eventSource?.onDisconnect = { [weak self] in
-            DispatchQueue.main.async { self?.connected = false }
-        }
-
-        eventSource?.onEvent = { [weak self] event, data in
+        let req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, err in
             guard let self = self else { return }
-            guard data != "null", !data.isEmpty else {
-                DispatchQueue.main.async { self.tasks = [] }
-                return
-            }
-            // Firebase SSE wraps data as: {"path":"/","data":{...}}
-            guard let jsonData = data.data(using: .utf8),
-                  let wrapper = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else { return }
-
-            if event == "put" {
-                // Full snapshot
-                if let taskDict = wrapper["data"] as? [String: Any] {
-                    self.parseTasks(taskDict)
-                } else if wrapper["data"] is NSNull {
-                    DispatchQueue.main.async { self.tasks = [] }
+            DispatchQueue.main.async {
+                if err != nil {
+                    self.connected = false
+                    return
                 }
-            } else if event == "patch" {
-                // Partial update — merge with existing
-                if let patchDict = wrapper["data"] as? [String: Any] {
-                    self.mergePatch(patchDict)
+                self.connected = true
+                guard let data = data,
+                      let str = String(data: data, encoding: .utf8),
+                      str != "null" else {
+                    self.tasks = []
+                    return
                 }
+                guard let dict = try? JSONDecoder().decode([String: Task].self, from: data) else { return }
+                let sorted = dict.values.sorted { $0.created > $1.created }
+                self.tasks = sorted
+                AlarmManager.shared.rescheduleAll(sorted)
             }
-        }
-
-        eventSource?.connect()
+        }.resume()
     }
 
-    private func parseTasks(_ dict: [String: Any]) {
-        var parsed: [Task] = []
-        for (_, val) in dict {
-            guard let obj = val as? [String: Any],
-                  let id = obj["id"] as? String,
-                  let text = obj["text"] as? String,
-                  let done = obj["done"] as? Bool,
-                  let created = obj["created"] as? String else { continue }
-            parsed.append(Task(id: id, text: text, done: done, alarm: obj["alarm"] as? String, created: created))
-        }
-        let sorted = parsed.sorted { $0.created > $1.created }
-        DispatchQueue.main.async {
-            self.tasks = sorted
-            AlarmManager.shared.rescheduleAll(sorted)
-        }
-    }
-
-    private func mergePatch(_ patch: [String: Any]) {
-        var current = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
-        for (key, val) in patch {
-            if val is NSNull {
-                current.removeValue(forKey: key)
-            } else if let obj = val as? [String: Any],
-                      let id = obj["id"] as? String,
-                      let text = obj["text"] as? String,
-                      let done = obj["done"] as? Bool,
-                      let created = obj["created"] as? String {
-                current[id] = Task(id: id, text: text, done: done, alarm: obj["alarm"] as? String, created: created)
-            } else if let update = val as? [String: Any] {
-                // Partial field update (e.g. just done changed)
-                if var existing = current[key] {
-                    if let done = update["done"] as? Bool { existing.done = done }
-                    if let text = update["text"] as? String { existing.text = text }
-                    if let alarm = update["alarm"] as? String { existing.alarm = alarm }
-                    current[key] = existing
-                }
-            }
-        }
-        let sorted = current.values.sorted { $0.created > $1.created }
-        DispatchQueue.main.async {
-            self.tasks = sorted
-            AlarmManager.shared.rescheduleAll(sorted)
-        }
-    }
-
-    // MARK: - Write (REST)
     func add(_ task: Task) {
+        // Optimistic
+        tasks.insert(task, at: 0)
         guard let url = URL(string: "\(FIREBASE_URL)/tasks/\(task.id).json") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONEncoder().encode(task)
-        URLSession.shared.dataTask(with: req).resume()
-        // Optimistic
-        DispatchQueue.main.async { self.tasks.insert(task, at: 0) }
+        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.fetch() }
+        }.resume()
     }
 
     func toggle(_ task: Task) {
@@ -210,15 +74,20 @@ class FirebaseManager: ObservableObject {
         req.httpMethod = "PUT"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONEncoder().encode(!task.done)
-        URLSession.shared.dataTask(with: req).resume()
+        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.fetch() }
+        }.resume()
     }
 
     func delete(_ task: Task) {
+        // Optimistic
         tasks.removeAll { $0.id == task.id }
         guard let url = URL(string: "\(FIREBASE_URL)/tasks/\(task.id).json") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "DELETE"
-        URLSession.shared.dataTask(with: req).resume()
+        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.fetch() }
+        }.resume()
     }
 }
 
@@ -227,6 +96,7 @@ class AlarmManager: ObservableObject {
     static let shared = AlarmManager()
     @Published var firingAlarm: Task? = nil
     private var timers: [String: Timer] = [:]
+    var audioPlayer: AVAudioPlayer?  // keep reference alive
 
     func schedule(_ task: Task) {
         guard let alarm = task.alarm, !task.done else { return }
@@ -279,13 +149,51 @@ class AlarmManager: ObservableObject {
     }
 
     func playAlarm() {
-        // Beep 4 times
-        for i in 0..<4 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.5) {
-                AudioServicesPlaySystemSound(1005)
+        // Set audio session to playback — bypasses silent/ring switch
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch { print("Audio session: \(error)") }
+
+        // Use system sound file directly — simplest and most reliable
+        // /System/Library/Audio/UISounds/ contains many built-in sounds
+        let soundPaths = [
+            "/System/Library/Audio/UISounds/alarm.caf",
+            "/System/Library/Audio/UISounds/begin_record.caf",
+            "/System/Library/Audio/UISounds/low_power.caf",
+            "/System/Library/Audio/UISounds/payment_success.caf",
+        ]
+
+        // Try each path until one works
+        var player: AVAudioPlayer?
+        for path in soundPaths {
+            let url = URL(fileURLWithPath: path)
+            if let p = try? AVAudioPlayer(contentsOf: url) {
+                player = p
+                break
             }
         }
+
+        if let player = player {
+            player.numberOfLoops = 3  // play 4 times total
+            player.volume = 1.0
+            player.prepareToPlay()
+            player.play()
+            // Keep reference alive
+            self.audioPlayer = player
+        } else {
+            // Fallback — system sound IDs
+            // 1304 = tweet, 1016 = payment success, 1033 = begin_record
+            AudioServicesPlaySystemSound(1304)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { AudioServicesPlaySystemSound(1304) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { AudioServicesPlaySystemSound(1304) }
+        }
+
+        // Vibrate
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        }
     }
 }
 
