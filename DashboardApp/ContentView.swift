@@ -1256,7 +1256,8 @@ struct TodoView: View {
 
     var body: some View {
         PanelView() {
-            VStack(spacing: 8) {
+            ZStack {
+                VStack(spacing: 8) {
                 // Header
                 HStack {
                     Text("TASKS")
@@ -1324,45 +1325,6 @@ struct TodoView: View {
                         .cornerRadius(5)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(theme.theme.accent.opacity(0.25), lineWidth: 1))
                     }
-                }
-
-                // Theme picker dropdown
-                if showThemePicker {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 5) {
-                            // Auto
-                            Button {
-                                theme.setManual(nil)
-                                withAnimation { showThemePicker = false }
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "wand.and.stars").font(.system(size: 8))
-                                    Text("Auto").font(.system(size: 8, weight: .medium, design: .monospaced))
-                                }
-                                .foregroundColor(theme.manualTheme == nil ? Color(hex: "060a0f") : theme.theme.accent)
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(theme.manualTheme == nil ? theme.theme.accent : theme.theme.accent.opacity(0.08))
-                                .cornerRadius(12)
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.theme.accent.opacity(0.3), lineWidth: 1))
-                            }
-                            ForEach(ThemeManager.manualOptions, id: \.0) { id, label in
-                                Button {
-                                    theme.setManual(id)
-                                    withAnimation { showThemePicker = false }
-                                } label: {
-                                    Text(label)
-                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                        .foregroundColor(theme.manualTheme == id ? Color(hex: "060a0f") : .white.opacity(0.6))
-                                        .padding(.horizontal, 8).padding(.vertical, 4)
-                                        .background(theme.manualTheme == id ? theme.theme.accent : Color.white.opacity(0.06))
-                                        .cornerRadius(12)
-                                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(
-                                            theme.manualTheme == id ? theme.theme.accent : Color.white.opacity(0.1), lineWidth: 1))
-                                }
-                            }
-                        }
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 // Sound picker dropdown
@@ -1489,7 +1451,73 @@ struct TodoView: View {
                         }
                     }
                 }
+            } // VStack
+            // Theme modal overlay
+            if showThemePicker {
+                ZStack {
+                    Color.black.opacity(0.5)
+                        .ignoresSafeArea()
+                        .onTapGesture { withAnimation { showThemePicker = false } }
+                    VStack(spacing: 0) {
+                        Spacer()
+                        VStack(spacing: 12) {
+                            Capsule()
+                                .fill(Color.white.opacity(0.2))
+                                .frame(width: 36, height: 4)
+                                .padding(.top, 12)
+                            Text("SELECT THEME")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(theme.theme.accent.opacity(0.6))
+                                .tracking(3)
+                            let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+                            LazyVGrid(columns: cols, spacing: 8) {
+                                Button {
+                                    theme.setManual(nil)
+                                    withAnimation { showThemePicker = false }
+                                } label: {
+                                    VStack(spacing: 4) {
+                                        Image(systemName: "wand.and.stars").font(.system(size: 18))
+                                        Text("Auto").font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    }
+                                    .foregroundColor(theme.manualTheme == nil ? Color(hex: "060a0f") : theme.theme.accent)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                                    .background(theme.manualTheme == nil ? theme.theme.accent : theme.theme.accent.opacity(0.1))
+                                    .cornerRadius(10)
+                                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.theme.accent.opacity(0.3), lineWidth: 1))
+                                }
+                                ForEach(ThemeManager.manualOptions, id: \.0) { id, label in
+                                    Button {
+                                        theme.setManual(id)
+                                        withAnimation { showThemePicker = false }
+                                    } label: {
+                                        VStack(spacing: 4) {
+                                            Text(String(label.prefix(2))).font(.system(size: 18))
+                                            Text(label.count > 3 ? String(label.dropFirst(3)) : label)
+                                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                                .lineLimit(1).minimumScaleFactor(0.7)
+                                        }
+                                        .foregroundColor(theme.manualTheme == id ? Color(hex: "060a0f") : .white.opacity(0.7))
+                                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                                        .background(theme.manualTheme == id ? theme.theme.accent : Color.white.opacity(0.06))
+                                        .cornerRadius(10)
+                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(
+                                            theme.manualTheme == id ? theme.theme.accent : Color.white.opacity(0.1), lineWidth: 1))
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 20)
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(Color(hex: "0a1020").opacity(0.97))
+                                .overlay(RoundedRectangle(cornerRadius: 20).stroke(theme.theme.accent.opacity(0.15), lineWidth: 1))
+                        )
+                    }
+                }
+                .transition(.opacity)
             }
+        } // ZStack
         }
     }
 
