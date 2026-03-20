@@ -39,7 +39,7 @@ struct WeatherData {
 // MARK: - Weather Theme
 enum WeatherCondition {
     case clearDay, clearNight
-    case cloudy, foggy
+    case partlyCloudy, cloudy, foggy
     case rainy, stormy, snowy
 }
 
@@ -53,8 +53,22 @@ struct WeatherTheme {
     let panelBorder: Color
     let label: String
 
-    static func from(code: Int, hour: Int, temp: Double = 20) -> WeatherTheme {
-        let isNight = hour >= 18 || hour < 6
+    static func manual(_ id: String) -> WeatherTheme {
+        switch id {
+        case "clearDay":     return from(code: 0, hour: 10, temp: 25)
+        case "partlyCloudy": return from(code: 2, hour: 10, temp: 25)
+        case "clearNight":   return from(code: 0, hour: 20, temp: 25)
+        case "cloudy":       return from(code: 3, hour: 10, temp: 25)
+        case "foggy":        return from(code: 45, hour: 10, temp: 25)
+        case "rainy":        return from(code: 61, hour: 10, temp: 25)
+        case "stormy":       return from(code: 95, hour: 10, temp: 25)
+        case "cold":         return from(code: 1, hour: 10, temp: 10)
+        default:             return from(code: 0, hour: 10, temp: 25)
+        }
+    }
+
+    static func from(code: Int, hour: Int, temp: Double = 20, sunsetHour: Int = 18) -> WeatherTheme {
+        let isNight = hour >= sunsetHour || hour < 6
 
         // Cold weather override — temp < 15°C regardless of condition
         if temp < 15 && code < 95 {
@@ -78,12 +92,28 @@ struct WeatherTheme {
             } else {
                 return WeatherTheme(
                     condition: .clearDay,
-                    bgTop: Color(hex: "020c18"), bgBottom: Color(hex: "0a3060"),
-                    accent: Color(hex: "44aaff"), accent2: Color(hex: "88ccff"),
-                    textColor: Color(hex: "d0eeff"), panelBorder: Color(hex: "44aaff").opacity(0.2),
+                    bgTop: Color(hex: "1a4a7a"), bgBottom: Color(hex: "2a7ab0"),
+                    accent: Color(hex: "88ddff"), accent2: Color(hex: "ccf0ff"),
+                    textColor: Color(hex: "eef8ff"), panelBorder: Color(hex: "88ddff").opacity(0.35),
                     label: "CLEAR SKY")
             }
-        case 2, 3: // Cloudy
+        case 2: // Partly Cloudy
+            if isNight {
+                return WeatherTheme(
+                    condition: .partlyCloudy,
+                    bgTop: Color(hex: "040a14"), bgBottom: Color(hex: "0a1828"),
+                    accent: Color(hex: "88aadd"), accent2: Color(hex: "5577aa"),
+                    textColor: Color(hex: "c0d4ee"), panelBorder: Color(hex: "88aadd").opacity(0.18),
+                    label: "PARTLY CLOUDY")
+            } else {
+                return WeatherTheme(
+                    condition: .partlyCloudy,
+                    bgTop: Color(hex: "1a3a5a"), bgBottom: Color(hex: "2a6090"),
+                    accent: Color(hex: "77ccff"), accent2: Color(hex: "bbeeff"),
+                    textColor: Color(hex: "e8f6ff"), panelBorder: Color(hex: "77ccff").opacity(0.3),
+                    label: "PARTLY CLOUDY")
+            }
+        case 3: // Overcast
             return WeatherTheme(
                 condition: .cloudy,
                 bgTop: Color(hex: "080c12"), bgBottom: Color(hex: "101820"),
@@ -134,14 +164,43 @@ class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
     @Published var theme: WeatherTheme = WeatherTheme.from(code: 0, hour: Calendar.current.component(.hour, from: Date()))
     @Published var weatherCode: Int = 0
+    @Published var manualTheme: String? = nil  // nil = auto
+    var sunsetHour: Int = 18
+
+    // All available manual themes
+    static let manualOptions: [(String, String)] = [  // (id, label)
+        ("clearDay",     "☀️ Clear"),
+        ("partlyCloudy", "🌤 Partly"),
+        ("clearNight",   "🌙 Night"),
+        ("cloudy",       "☁️ Overcast"),
+        ("foggy",        "🌫 Misty"),
+        ("rainy",        "🌧 Rain"),
+        ("stormy",       "⛈ Storm"),
+        ("cold",         "🥶 Cold"),
+    ]
 
     func update(code: Int, temp: Double = 20) {
         weatherCode = code
+        guard manualTheme == nil else { return }  // skip if manual override
         let hour = Calendar.current.component(.hour, from: Date())
         DispatchQueue.main.async {
             withAnimation(.easeInOut(duration: 2.0)) {
-                self.theme = WeatherTheme.from(code: code, hour: hour, temp: temp)
+                self.theme = WeatherTheme.from(code: code, hour: hour, temp: temp, sunsetHour: self.sunsetHour)
             }
+        }
+    }
+
+    func setManual(_ id: String?) {
+        manualTheme = id
+        if let id = id {
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 2.0)) {
+                    self.theme = WeatherTheme.manual(id)
+                }
+            }
+        } else {
+            // Revert to auto
+            update(code: weatherCode)
         }
     }
 }
@@ -197,7 +256,7 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         // Open-Meteo — current + 5 day forecast + feels like + humidity + wind
         let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)" +
             "&current=temperature_2m,apparent_temperature,weathercode,windspeed_10m,relativehumidity_2m" +
-            "&daily=weathercode,temperature_2m_max,temperature_2m_min" +
+            "&daily=weathercode,temperature_2m_max,temperature_2m_min,sunset" +
             "&temperature_unit=celsius&windspeed_unit=kmh&forecast_days=6&timezone=auto"
         guard let url = URL(string: urlStr) else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, err in
@@ -228,6 +287,22 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     forecast.append(DayForecast(id: i, date: dayLabel.uppercased(), high: highs[i], low: lows[i], icon: ic))
                 }
             }
+
+            // Parse sunset hour for today
+            var sunsetHour = 18
+            if let daily = json["daily"] as? [String: Any],
+               let sunsets = daily["sunset"] as? [String],
+               let first = sunsets.first {
+                // Format: "2026-03-20T18:15" — extract hour
+                let parts = first.split(separator: "T")
+                if parts.count == 2 {
+                    let timePart = String(parts[1])
+                    if let h = Int(timePart.prefix(2)) {
+                        sunsetHour = h
+                    }
+                }
+            }
+            ThemeManager.shared.sunsetHour = sunsetHour
 
             DispatchQueue.main.async {
                 self.weather = WeatherData(
@@ -559,6 +634,8 @@ struct WeatherBackgroundView: View {
                 OceanWaveView(color: Color(hex: "44aaff"))
             case .clearNight:
                 StarfieldView()
+            case .partlyCloudy:
+                PartlyCloudyView()
             case .foggy:
                 FogView()
             case .cloudy:
@@ -656,23 +733,42 @@ struct SnowFlake {
 struct OceanWaveView: View {
     let color: Color
     @State private var phase: Double = 0
+    @State private var sunBob: CGFloat = 0
     let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottom) {
-                // Wave 1
+                // Yellow sun glow
+                Circle()
+                    .fill(Color(hex: "ffdd44").opacity(0.2))
+                    .frame(width: 120, height: 120)
+                    .blur(radius: 35)
+                    .position(x: geo.size.width * 0.8, y: geo.size.height * 0.18 + sunBob)
+
+                // Yellow sun
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Color(hex: "ffffaa"), Color(hex: "ffee44"), Color(hex: "ffbb22")],
+                        center: .center, startRadius: 0, endRadius: 26))
+                    .frame(width: 50, height: 50)
+                    .shadow(color: Color(hex: "ffcc33").opacity(0.8), radius: 20)
+                    .position(x: geo.size.width * 0.8, y: geo.size.height * 0.16 + sunBob)
+
+                // Waves
                 WaveShape(phase: phase, amplitude: 8, frequency: 1.2)
-                    .fill(color.opacity(0.12))
+                    .fill(color.opacity(0.15))
                     .frame(height: 60)
-                // Wave 2
                 WaveShape(phase: phase + 1.5, amplitude: 6, frequency: 0.9)
-                    .fill(color.opacity(0.08))
+                    .fill(color.opacity(0.1))
                     .frame(height: 50)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
-        .onReceive(timer) { _ in phase += 0.04 }
+        .onReceive(timer) { _ in
+            phase += 0.04
+            sunBob = CGFloat(sin(phase * 0.3) * 5)
+        }
     }
 }
 
@@ -740,6 +836,48 @@ struct FogView: View {
         }
         .onReceive(timer) { _ in
             offset += 0.3
+            if offset > 200 { offset = 0 }
+        }
+    }
+}
+
+// MARK: - Partly Cloudy Animation
+struct PartlyCloudyView: View {
+    @State private var offset: CGFloat = 0
+    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                // Yellow sun glow
+                Circle()
+                    .fill(Color(hex: "ffdd44").opacity(0.15))
+                    .frame(width: 110, height: 110)
+                    .blur(radius: 32)
+                    .position(x: geo.size.width * 0.75, y: geo.size.height * 0.2)
+
+                // Yellow sun
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Color(hex: "fffaaa"), Color(hex: "ffdd44"), Color(hex: "ffaa22")],
+                        center: .center, startRadius: 0, endRadius: 20))
+                    .frame(width: 38, height: 38)
+                    .shadow(color: Color(hex: "ffcc33").opacity(0.7), radius: 16)
+                    .position(x: geo.size.width * 0.75, y: geo.size.height * 0.18)
+
+                // Moving clouds covering sun partially
+                ForEach(0..<4, id: \.self) { i in
+                    Ellipse()
+                        .fill(Color.white.opacity(0.05 + Double(i) * 0.01))
+                        .frame(width: CGFloat(160 + i * 50), height: 45)
+                        .offset(x: offset * (i % 2 == 0 ? 1 : -0.6) + CGFloat(i * 60 - 80),
+                                y: geo.size.height * 0.12 + CGFloat(i * 30))
+                        .blur(radius: 14)
+                }
+            }
+        }
+        .onReceive(timer) { _ in
+            offset += 0.18
             if offset > 200 { offset = 0 }
         }
     }
@@ -844,7 +982,7 @@ struct ClockView: View {
         .onReceive(timer) { t in
             now = t
             colonOn = Calendar.current.component(.second, from: t) % 2 == 0
-            // Update theme every minute in case hour changed
+            // Refresh theme every minute — catches sunset transition
             if Calendar.current.component(.second, from: t) == 0 {
                 ThemeManager.shared.update(code: ThemeManager.shared.weatherCode)
             }
@@ -1101,6 +1239,7 @@ struct TodoView: View {
     @State private var pendingAlarm = Date()
     @State private var showPicker = false
     @State private var showSoundPicker = false
+    @State private var showThemePicker = false
     @State private var filterMode = "all"
     @State private var previewPlayer: AVAudioPlayer?
 
@@ -1140,7 +1279,7 @@ struct TodoView: View {
                         .padding(.leading, 6)
                 }
 
-                // Filter tabs + sound button
+                // Filter tabs + sound button + theme button
                 HStack(spacing: 4) {
                     ForEach([("all","All"),("pending","Pending"),("done","Done"),("alarm","Alarm")], id: \.0) { k, l in
                         Button { filterMode = k } label: {
@@ -1156,7 +1295,7 @@ struct TodoView: View {
                     }
                     Spacer()
                     // Sound picker button
-                    Button { showSoundPicker.toggle() } label: {
+                    Button { showSoundPicker.toggle(); showThemePicker = false } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "music.note")
                                 .font(.system(size: 9))
@@ -1170,6 +1309,60 @@ struct TodoView: View {
                         .cornerRadius(5)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(theme.theme.accent2.opacity(0.2), lineWidth: 1))
                     }
+                    // Theme toggle button
+                    Button { showThemePicker.toggle(); showSoundPicker = false } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: theme.manualTheme == nil ? "wand.and.stars" : "paintpalette.fill")
+                                .font(.system(size: 9))
+                            Text(theme.manualTheme == nil ? "AUTO" : "THEME")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        }
+                        .foregroundColor(theme.theme.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(theme.theme.accent.opacity(0.1))
+                        .cornerRadius(5)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(theme.theme.accent.opacity(0.25), lineWidth: 1))
+                    }
+                }
+
+                // Theme picker dropdown
+                if showThemePicker {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            // Auto
+                            Button {
+                                theme.setManual(nil)
+                                withAnimation { showThemePicker = false }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "wand.and.stars").font(.system(size: 8))
+                                    Text("Auto").font(.system(size: 8, weight: .medium, design: .monospaced))
+                                }
+                                .foregroundColor(theme.manualTheme == nil ? Color(hex: "060a0f") : theme.theme.accent)
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(theme.manualTheme == nil ? theme.theme.accent : theme.theme.accent.opacity(0.08))
+                                .cornerRadius(12)
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.theme.accent.opacity(0.3), lineWidth: 1))
+                            }
+                            ForEach(ThemeManager.manualOptions, id: \.0) { id, label in
+                                Button {
+                                    theme.setManual(id)
+                                    withAnimation { showThemePicker = false }
+                                } label: {
+                                    Text(label)
+                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                        .foregroundColor(theme.manualTheme == id ? Color(hex: "060a0f") : .white.opacity(0.6))
+                                        .padding(.horizontal, 8).padding(.vertical, 4)
+                                        .background(theme.manualTheme == id ? theme.theme.accent : Color.white.opacity(0.06))
+                                        .cornerRadius(12)
+                                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(
+                                            theme.manualTheme == id ? theme.theme.accent : Color.white.opacity(0.1), lineWidth: 1))
+                                }
+                            }
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 // Sound picker dropdown
