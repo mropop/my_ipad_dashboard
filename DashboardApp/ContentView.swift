@@ -665,7 +665,7 @@ struct WeatherBackgroundView: View {
 struct RainView: View {
     let drops = (0..<50).map { _ in RainDrop() }
     var body: some View {
-        TimelineView(.periodic(interval: 1.0/24.0)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.0/24.0)) { tl in
             let now = tl.date.timeIntervalSince1970
             Canvas { ctx, size in
                 for drop in drops {
@@ -722,7 +722,7 @@ struct StormView: View {
 struct SnowView: View {
     let flakes = (0..<35).map { _ in SnowFlake() }
     var body: some View {
-        TimelineView(.periodic(interval: 1.0/20.0)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.0/20.0)) { tl in
             let now = tl.date.timeIntervalSince1970
             ZStack {
                 // Snowflakes via Canvas
@@ -768,7 +768,7 @@ struct OceanWaveView: View {
     let color: Color
 
     var body: some View {
-        TimelineView(.periodic(interval: 1.0/20.0)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.0/20.0)) { tl in
             let t = tl.date.timeIntervalSince1970
             let phase = t * 0.8
             let sunBob = CGFloat(sin(t * 0.6) * 5)
@@ -824,7 +824,7 @@ struct WaveShape: Shape {
 struct StarfieldView: View {
     let stars = (0..<80).map { _ in Star() }  // reduced for power saving
     var body: some View {
-        TimelineView(.periodic(interval: 1.0/10.0)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.0/10.0)) { tl in
             let now = tl.date.timeIntervalSince1970
             ZStack {
                 // Stars via Canvas — spread across full top 70%
@@ -903,20 +903,31 @@ struct Star {
 // MARK: - Fog Animation
 struct FogView: View {
     var body: some View {
-        TimelineView(.periodic(interval: 1.0/8.0)) { tl in
-            let t = tl.date.timeIntervalSince1970
-            GeometryReader { geo in
-                ZStack {
-                    ForEach(0..<3, id: \.self) { i in
-                        let offset = CGFloat(sin(t * 0.08 + Double(i) * 1.2) * 60)
-                        Ellipse()
-                            .fill(Color.white.opacity(0.03))
-                            .frame(width: geo.size.width * 1.4, height: 120)
-                            .offset(x: offset + CGFloat(i) * 60 - 100,
-                                    y: geo.size.height * 0.3 + CGFloat(i) * 60)
-                            .blur(radius: 30)
-                    }
-                }
+        TimelineView(.periodic(from: .now, by: 1.0/8.0)) { tl in
+            FogCanvas(t: tl.date.timeIntervalSince1970)
+        }
+    }
+}
+struct FogCanvas: View {
+    let t: Double
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Ellipse()
+                    .fill(Color.white.opacity(0.03))
+                    .frame(width: geo.size.width * 1.4, height: 120)
+                    .offset(x: CGFloat(sin(t * 0.08) * 60) - 100, y: geo.size.height * 0.3)
+                    .blur(radius: 30)
+                Ellipse()
+                    .fill(Color.white.opacity(0.03))
+                    .frame(width: geo.size.width * 1.4, height: 120)
+                    .offset(x: CGFloat(sin(t * 0.08 + 1.2) * 60) - 40, y: geo.size.height * 0.36)
+                    .blur(radius: 30)
+                Ellipse()
+                    .fill(Color.white.opacity(0.03))
+                    .frame(width: geo.size.width * 1.4, height: 120)
+                    .offset(x: CGFloat(sin(t * 0.08 + 2.4) * 60) + 20, y: geo.size.height * 0.42)
+                    .blur(radius: 30)
             }
         }
     }
@@ -959,46 +970,50 @@ struct CloudShape: Shape {
 
 struct PartlyCloudyView: View {
     var body: some View {
-        TimelineView(.periodic(interval: 1.0/10.0)) { tl in
-            let t = tl.date.timeIntervalSince1970
-            GeometryReader { geo in
-                ZStack {
-                    // Sun glow
-                    Circle()
-                        .fill(Color(hex: "ffdd44").opacity(0.25))
-                        .frame(width: 130, height: 130)
-                        .blur(radius: 28)
-                        .position(x: geo.size.width * 0.72, y: geo.size.height * 0.2)
-                    // Sun
-                    Circle()
-                        .fill(RadialGradient(
-                            colors: [Color(hex: "ffffaa"), Color(hex: "ffee44"), Color(hex: "ffbb22")],
-                            center: .center, startRadius: 0, endRadius: 22))
-                        .frame(width: 44, height: 44)
-                        .shadow(color: Color(hex: "ffcc33").opacity(0.8), radius: 18)
-                        .position(x: geo.size.width * 0.72, y: geo.size.height * 0.18)
+        TimelineView(.periodic(from: .now, by: 1.0/10.0)) { tl in
+            PartlyCloudyCanvas(t: tl.date.timeIntervalSince1970)
+        }
+    }
+}
 
-                    // Cloud 1 — big, drifts slowly rightward
-                    let c1x = geo.size.width * 0.38 + CGFloat(sin(t * 0.03) * 30 + t * 3).truncatingRemainder(dividingBy: geo.size.width + 200) - 100
-                    CloudShape(seed: 1)
-                        .fill(Color.white.opacity(0.05))
-                        .frame(width: 200, height: 60)
-                        .position(x: c1x, y: geo.size.height * 0.16)
-
-                    // Cloud 2 — medium, faster
-                    let c2x = geo.size.width * 0.65 + CGFloat(sin(t * 0.04 + 1.5) * 20 + t * 5).truncatingRemainder(dividingBy: geo.size.width + 180) - 90
-                    CloudShape(seed: 2)
-                        .fill(Color.white.opacity(0.07))
-                        .frame(width: 150, height: 45)
-                        .position(x: c2x, y: geo.size.height * 0.27)
-
-                    // Cloud 3 — small, different speed
-                    let c3x = geo.size.width * 0.2 + CGFloat(sin(t * 0.025 + 3.0) * 25 + t * 4).truncatingRemainder(dividingBy: geo.size.width + 150) - 75
-                    CloudShape(seed: 3)
-                        .fill(Color.white.opacity(0.06))
-                        .frame(width: 120, height: 36)
-                        .position(x: c3x, y: geo.size.height * 0.1)
-                }
+struct PartlyCloudyCanvas: View {
+    let t: Double
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let c1x = w * 0.38 + CGFloat(t * 3).truncatingRemainder(dividingBy: w + 200) - 100
+            let c2x = w * 0.65 + CGFloat(t * 5).truncatingRemainder(dividingBy: w + 180) - 90
+            let c3x = w * 0.20 + CGFloat(t * 4).truncatingRemainder(dividingBy: w + 150) - 75
+            ZStack {
+                // Sun glow
+                Circle()
+                    .fill(Color(hex: "ffdd44").opacity(0.25))
+                    .frame(width: 130, height: 130)
+                    .blur(radius: 28)
+                    .position(x: w * 0.72, y: h * 0.2)
+                // Sun
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Color(hex: "ffffaa"), Color(hex: "ffee44"), Color(hex: "ffbb22")],
+                        center: .center, startRadius: 0, endRadius: 22))
+                    .frame(width: 44, height: 44)
+                    .shadow(color: Color(hex: "ffcc33").opacity(0.8), radius: 18)
+                    .position(x: w * 0.72, y: h * 0.18)
+                // Cloud 1
+                CloudShape(seed: 1)
+                    .fill(Color.white.opacity(0.05))
+                    .frame(width: 200, height: 60)
+                    .position(x: c1x, y: h * 0.16)
+                // Cloud 2
+                CloudShape(seed: 2)
+                    .fill(Color.white.opacity(0.07))
+                    .frame(width: 150, height: 45)
+                    .position(x: c2x, y: h * 0.27)
+                // Cloud 3
+                CloudShape(seed: 3)
+                    .fill(Color.white.opacity(0.06))
+                    .frame(width: 120, height: 36)
+                    .position(x: c3x, y: h * 0.1)
             }
         }
     }
@@ -1007,41 +1022,33 @@ struct PartlyCloudyView: View {
 // MARK: - Cloudy Animation
 struct CloudyView: View {
     var body: some View {
-        TimelineView(.periodic(interval: 1.0/10.0)) { tl in
-            let t = tl.date.timeIntervalSince1970
-            GeometryReader { geo in
-                ZStack {
-                    // 5 clouds at different heights/speeds, continuously drifting
-                    let c1x = CGFloat(t * 2.5).truncatingRemainder(dividingBy: geo.size.width + 260) - 130
-                    CloudShape(seed: 1)
-                        .fill(Color.white.opacity(0.06))
-                        .frame(width: 240, height: 70)
-                        .position(x: c1x, y: geo.size.height * 0.1)
+        TimelineView(.periodic(from: .now, by: 1.0/10.0)) { tl in
+            CloudyCanvas(t: tl.date.timeIntervalSince1970)
+        }
+    }
+}
 
-                    let c2x = CGFloat(t * 1.8 + 200).truncatingRemainder(dividingBy: geo.size.width + 220) - 110
-                    CloudShape(seed: 2)
-                        .fill(Color.white.opacity(0.05))
-                        .frame(width: 190, height: 58)
-                        .position(x: c2x, y: geo.size.height * 0.2)
-
-                    let c3x = CGFloat(t * 3.2 + 400).truncatingRemainder(dividingBy: geo.size.width + 200) - 100
-                    CloudShape(seed: 3)
-                        .fill(Color.white.opacity(0.06))
-                        .frame(width: 160, height: 50)
-                        .position(x: c3x, y: geo.size.height * 0.06)
-
-                    let c4x = CGFloat(t * 2.0 + 600).truncatingRemainder(dividingBy: geo.size.width + 180) - 90
-                    CloudShape(seed: 4)
-                        .fill(Color.white.opacity(0.04))
-                        .frame(width: 210, height: 62)
-                        .position(x: c4x, y: geo.size.height * 0.3)
-
-                    let c5x = CGFloat(t * 1.5 + 100).truncatingRemainder(dividingBy: geo.size.width + 160) - 80
-                    CloudShape(seed: 5)
-                        .fill(Color.white.opacity(0.05))
-                        .frame(width: 140, height: 44)
-                        .position(x: c5x, y: geo.size.height * 0.16)
-                }
+struct CloudyCanvas: View {
+    let t: Double
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let c1x = CGFloat(t * 2.5).truncatingRemainder(dividingBy: w + 260) - 130
+            let c2x = CGFloat(t * 1.8 + 200).truncatingRemainder(dividingBy: w + 220) - 110
+            let c3x = CGFloat(t * 3.2 + 400).truncatingRemainder(dividingBy: w + 200) - 100
+            let c4x = CGFloat(t * 2.0 + 600).truncatingRemainder(dividingBy: w + 180) - 90
+            let c5x = CGFloat(t * 1.5 + 100).truncatingRemainder(dividingBy: w + 160) - 80
+            ZStack {
+                CloudShape(seed: 1).fill(Color.white.opacity(0.06))
+                    .frame(width: 240, height: 70).position(x: c1x, y: h * 0.1)
+                CloudShape(seed: 2).fill(Color.white.opacity(0.05))
+                    .frame(width: 190, height: 58).position(x: c2x, y: h * 0.2)
+                CloudShape(seed: 3).fill(Color.white.opacity(0.06))
+                    .frame(width: 160, height: 50).position(x: c3x, y: h * 0.06)
+                CloudShape(seed: 4).fill(Color.white.opacity(0.04))
+                    .frame(width: 210, height: 62).position(x: c4x, y: h * 0.3)
+                CloudShape(seed: 5).fill(Color.white.opacity(0.05))
+                    .frame(width: 140, height: 44).position(x: c5x, y: h * 0.16)
             }
         }
     }
