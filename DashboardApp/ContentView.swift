@@ -168,15 +168,15 @@ class ThemeManager: ObservableObject {
     var sunsetHour: Int = 18
     var lastTemp: Double = 25
 
-    static let manualOptions: [(String, String)] = [
-        ("clearDay",     "☀️ Clear"),
-        ("partlyCloudy", "🌤 Partly"),
-        ("clearNight",   "🌙 Night"),
-        ("cloudy",       "☁️ Overcast"),
-        ("foggy",        "🌫 Misty"),
-        ("rainy",        "🌧 Rain"),
-        ("stormy",       "⛈ Storm"),
-        ("cold",         "🥶 Cold"),
+    static let manualOptions: [(String, String, String)] = [  // (id, emoji, name)
+        ("clearDay",     "☀️", "Clear"),
+        ("partlyCloudy", "🌤", "Partly"),
+        ("clearNight",   "🌙", "Night"),
+        ("cloudy",       "☁️", "Overcast"),
+        ("foggy",        "🌫", "Misty"),
+        ("rainy",        "🌧", "Rain"),
+        ("stormy",       "⛈", "Storm"),
+        ("cold",         "🥶", "Cold"),
     ]
 
     func update(code: Int, temp: Double? = nil) {
@@ -718,18 +718,34 @@ struct StormView: View {
 
 // MARK: - Snow Animation
 struct SnowView: View {
-    let flakes = (0..<50).map { _ in SnowFlake() }
+    let flakes = (0..<55).map { _ in SnowFlake() }
     var body: some View {
         TimelineView(.animation) { tl in
             let now = tl.date.timeIntervalSince1970
-            Canvas { ctx, size in
-                for flake in flakes {
-                    let progress = ((now + flake.driftOffset).truncatingRemainder(dividingBy: flake.duration)) / flake.duration
-                    let drift = sin(now * flake.driftSpeed + flake.driftOffset) * 20
-                    let x = flake.x * size.width + drift
-                    let y = progress * (size.height + 20) - 10
-                    let rect = CGRect(x: x - flake.size/2, y: y - flake.size/2, width: flake.size, height: flake.size)
-                    ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(flake.opacity)))
+            ZStack {
+                // Snowflakes via Canvas
+                Canvas { ctx, size in
+                    for flake in flakes {
+                        let progress = ((now + flake.driftOffset).truncatingRemainder(dividingBy: flake.duration)) / flake.duration
+                        let drift = sin(now * flake.driftSpeed + flake.driftOffset) * 20
+                        let x = flake.x * size.width + drift
+                        let y = progress * (size.height + 20) - 10
+                        let rect = CGRect(x: x - flake.size/2, y: y - flake.size/2, width: flake.size, height: flake.size)
+                        ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(flake.opacity)))
+                    }
+                }
+                // Frost glow at bottom
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color(hex: "88ccff").opacity(0.08)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: geo.size.height * 0.3)
+                    .position(x: geo.size.width/2, y: geo.size.height * 0.87)
+                    // Icy shimmer top
+                    let shimmer = CGFloat(sin(now * 0.5) * 0.03)
+                    Color(hex: "aaddff").opacity(Double(shimmer) + 0.02)
+                        .blendMode(.screen)
                 }
             }
         }
@@ -808,13 +824,47 @@ struct StarfieldView: View {
     var body: some View {
         TimelineView(.animation) { tl in
             let now = tl.date.timeIntervalSince1970
-            Canvas { ctx, size in
-                for star in stars {
-                    let pulse = 0.4 + 0.6 * abs(sin(now * star.speed + star.offset))
-                    let rect = CGRect(x: star.x * size.width - star.size/2,
-                                      y: star.y * size.height - star.size/2,
-                                      width: star.size, height: star.size)
-                    ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(pulse * star.opacity)))
+            ZStack {
+                // Stars via Canvas
+                Canvas { ctx, size in
+                    for star in stars {
+                        let pulse = 0.4 + 0.6 * abs(sin(now * star.speed + star.offset))
+                        let rect = CGRect(x: star.x * size.width - star.size/2,
+                                          y: star.y * size.height * 0.6 - star.size/2,
+                                          width: star.size, height: star.size)
+                        ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(pulse * star.opacity)))
+                    }
+                }
+                // Moon — visible SwiftUI view
+                GeometryReader { geo in
+                    ZStack {
+                        // Moon glow
+                        Circle()
+                            .fill(Color(hex: "c8e0ff").opacity(0.25))
+                            .frame(width: 90, height: 90)
+                            .blur(radius: 18)
+                            .position(x: geo.size.width * 0.78, y: geo.size.height * 0.18)
+                        // Moon body
+                        Circle()
+                            .fill(RadialGradient(
+                                colors: [Color(hex: "f0f8ff"), Color(hex: "d0e8ff"), Color(hex: "b8d4f0")],
+                                center: .center, startRadius: 0, endRadius: 22))
+                            .frame(width: 44, height: 44)
+                            .shadow(color: Color(hex: "aaccff").opacity(0.6), radius: 14)
+                            .position(x: geo.size.width * 0.78, y: geo.size.height * 0.18)
+                        // Moon reflection on water
+                        let shimmer = CGFloat(sin(now * 0.8) * 3)
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(hex: "c8e0ff").opacity(0.18), .clear],
+                                    startPoint: .top, endPoint: .bottom)
+                            )
+                            .frame(width: 6, height: 80)
+                            .blur(radius: 3)
+                            .offset(x: shimmer)
+                            .position(x: geo.size.width * 0.78, y: geo.size.height * 0.72)
+                    }
                 }
             }
         }
@@ -861,28 +911,42 @@ struct PartlyCloudyView: View {
                 ZStack {
                     // Yellow sun glow
                     Circle()
-                        .fill(Color(hex: "ffdd44").opacity(0.15))
-                        .frame(width: 110, height: 110)
-                        .blur(radius: 32)
-                        .position(x: geo.size.width * 0.75, y: geo.size.height * 0.2)
+                        .fill(Color(hex: "ffdd44").opacity(0.25))
+                        .frame(width: 130, height: 130)
+                        .blur(radius: 28)
+                        .position(x: geo.size.width * 0.72, y: geo.size.height * 0.2)
                     // Yellow sun
                     Circle()
                         .fill(RadialGradient(
-                            colors: [Color(hex: "fffaaa"), Color(hex: "ffdd44"), Color(hex: "ffaa22")],
-                            center: .center, startRadius: 0, endRadius: 20))
-                        .frame(width: 38, height: 38)
-                        .shadow(color: Color(hex: "ffcc33").opacity(0.7), radius: 16)
-                        .position(x: geo.size.width * 0.75, y: geo.size.height * 0.18)
-                    // Moving clouds
-                    ForEach(0..<4, id: \.self) { i in
-                        let spd = 0.06 + Double(i) * 0.02
-                        let offset = CGFloat(sin(t * spd + Double(i) * 1.5) * 40) + CGFloat(i * 30 - 40)
-                        Ellipse()
-                            .fill(Color.white.opacity(0.05 + Double(i) * 0.01))
-                            .frame(width: CGFloat(160 + i * 50), height: 45)
-                            .offset(x: offset, y: geo.size.height * 0.12 + CGFloat(i * 30))
-                            .blur(radius: 14)
-                    }
+                            colors: [Color(hex: "ffffaa"), Color(hex: "ffee44"), Color(hex: "ffbb22")],
+                            center: .center, startRadius: 0, endRadius: 22))
+                        .frame(width: 44, height: 44)
+                        .shadow(color: Color(hex: "ffcc33").opacity(0.8), radius: 18)
+                        .position(x: geo.size.width * 0.72, y: geo.size.height * 0.18)
+
+                    // Cloud 1 — big, slow, partially covers sun
+                    let c1x = CGFloat(sin(t * 0.04) * 60) + geo.size.width * 0.45
+                    RoundedRectangle(cornerRadius: 40)
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: 200, height: 55)
+                        .blur(radius: 6)
+                        .position(x: c1x, y: geo.size.height * 0.17)
+
+                    // Cloud 2 — medium
+                    let c2x = CGFloat(sin(t * 0.055 + 1.2) * 50) + geo.size.width * 0.6
+                    RoundedRectangle(cornerRadius: 35)
+                        .fill(Color.white.opacity(0.14))
+                        .frame(width: 150, height: 42)
+                        .blur(radius: 5)
+                        .position(x: c2x, y: geo.size.height * 0.26)
+
+                    // Cloud 3 — small
+                    let c3x = CGFloat(sin(t * 0.035 + 2.5) * 40) + geo.size.width * 0.3
+                    RoundedRectangle(cornerRadius: 28)
+                        .fill(Color.white.opacity(0.11))
+                        .frame(width: 110, height: 32)
+                        .blur(radius: 4)
+                        .position(x: c3x, y: geo.size.height * 0.12)
                 }
             }
         }
@@ -896,15 +960,43 @@ struct CloudyView: View {
             let t = tl.date.timeIntervalSince1970
             GeometryReader { geo in
                 ZStack {
-                    ForEach(0..<4, id: \.self) { i in
-                        let dir: Double = i % 2 == 0 ? 1 : -1
-                        let offset = CGFloat(sin(t * 0.05 * dir + Double(i)) * 80) + CGFloat(i * 80 - 100)
-                        Ellipse()
-                            .fill(Color.white.opacity(0.025))
-                            .frame(width: CGFloat(180 + i * 40), height: 60)
-                            .offset(x: offset, y: geo.size.height * 0.15 + CGFloat(i * 35))
-                            .blur(radius: 20)
-                    }
+                    // Large background cloud layer
+                    let bg1x = CGFloat(sin(t * 0.03) * 50) + geo.size.width * 0.4
+                    RoundedRectangle(cornerRadius: 50)
+                        .fill(Color.white.opacity(0.09))
+                        .frame(width: 280, height: 70)
+                        .blur(radius: 8)
+                        .position(x: bg1x, y: geo.size.height * 0.12)
+
+                    let bg2x = CGFloat(sin(t * 0.025 + 2.0) * 60) + geo.size.width * 0.65
+                    RoundedRectangle(cornerRadius: 45)
+                        .fill(Color.white.opacity(0.07))
+                        .frame(width: 240, height: 60)
+                        .blur(radius: 7)
+                        .position(x: bg2x, y: geo.size.height * 0.22)
+
+                    // Mid clouds
+                    let m1x = CGFloat(sin(t * 0.04 + 1.0) * 70) + geo.size.width * 0.3
+                    RoundedRectangle(cornerRadius: 40)
+                        .fill(Color.white.opacity(0.11))
+                        .frame(width: 200, height: 52)
+                        .blur(radius: 6)
+                        .position(x: m1x, y: geo.size.height * 0.18)
+
+                    let m2x = CGFloat(sin(t * 0.035 + 3.0) * 55) + geo.size.width * 0.7
+                    RoundedRectangle(cornerRadius: 35)
+                        .fill(Color.white.opacity(0.09))
+                        .frame(width: 170, height: 45)
+                        .blur(radius: 5)
+                        .position(x: m2x, y: geo.size.height * 0.08)
+
+                    // Small foreground cloud
+                    let s1x = CGFloat(sin(t * 0.05 + 0.5) * 45) + geo.size.width * 0.5
+                    RoundedRectangle(cornerRadius: 28)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 130, height: 36)
+                        .blur(radius: 4)
+                        .position(x: s1x, y: geo.size.height * 0.3)
                 }
             }
         }
@@ -1488,14 +1580,14 @@ struct TodoView: View {
                                     .cornerRadius(10)
                                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.theme.accent.opacity(0.3), lineWidth: 1))
                                 }
-                                ForEach(ThemeManager.manualOptions, id: \.0) { id, label in
+                                ForEach(ThemeManager.manualOptions, id: \.0) { id, emoji, name in
                                     Button {
                                         theme.setManual(id)
                                         withAnimation { showThemePicker = false }
                                     } label: {
                                         VStack(spacing: 4) {
-                                            Text(String(label.prefix(2))).font(.system(size: 18))
-                                            Text(label.count > 3 ? String(label.dropFirst(3)) : label)
+                                            Text(emoji).font(.system(size: 18))
+                                            Text(name)
                                                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                                 .lineLimit(1).minimumScaleFactor(0.7)
                                         }
