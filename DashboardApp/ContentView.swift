@@ -920,61 +920,36 @@ struct FogView: View {
     }
 }
 
-// MARK: - Cloud Shape (Smooth Bezier — natural organic)
+// MARK: - Cloud Shape (simple ellipse clusters)
 struct CloudShape: Shape {
     let seed: Int
 
     func path(in rect: CGRect) -> Path {
         let w = rect.width, h = rect.height
-        // Use seed to vary bump count and heights
-        let bumps: [(CGFloat, CGFloat, CGFloat, CGFloat)] = seed == 1 ? [
-            (0.10, 0.72, 0.38, 0.30), (0.25, 0.45, 0.42, 0.55),
-            (0.45, 0.30, 0.46, 0.65), (0.65, 0.40, 0.42, 0.55),
-            (0.82, 0.55, 0.36, 0.40), (0.93, 0.72, 0.28, 0.28)
-        ] : seed == 2 ? [
-            (0.08, 0.75, 0.34, 0.28), (0.24, 0.50, 0.40, 0.50),
-            (0.44, 0.32, 0.44, 0.62), (0.62, 0.28, 0.46, 0.68),
-            (0.80, 0.42, 0.38, 0.52), (0.94, 0.70, 0.26, 0.26)
-        ] : seed == 3 ? [
-            (0.12, 0.70, 0.36, 0.32), (0.28, 0.48, 0.42, 0.52),
-            (0.48, 0.35, 0.44, 0.60), (0.66, 0.38, 0.40, 0.56),
-            (0.82, 0.52, 0.34, 0.44), (0.94, 0.74, 0.24, 0.24)
-        ] : seed == 4 ? [
-            (0.10, 0.68, 0.38, 0.34), (0.27, 0.44, 0.44, 0.56),
-            (0.46, 0.28, 0.48, 0.68), (0.64, 0.35, 0.44, 0.60),
-            (0.80, 0.48, 0.36, 0.46), (0.92, 0.72, 0.26, 0.26)
-        ] : [
-            (0.11, 0.73, 0.36, 0.30), (0.26, 0.46, 0.42, 0.54),
-            (0.46, 0.33, 0.45, 0.62), (0.65, 0.36, 0.42, 0.58),
-            (0.81, 0.50, 0.35, 0.44), (0.93, 0.73, 0.25, 0.25)
-        ]
-        // bumps: (xFrac, yFrac, radiusFrac, controlHeight)
-
         var path = Path()
-        path.move(to: CGPoint(x: 0, y: h))
-        path.addLine(to: CGPoint(x: w, y: h))
 
-        // Smooth bezier across top — right to left
-        var pts: [(CGFloat, CGFloat)] = []
-        for b in bumps {
-            pts.append((b.0 * w, b.1 * h))
-        }
+        let configs: [(CGFloat,CGFloat,CGFloat,CGFloat)] = seed == 1 ? [
+            (0.15,0.65,0.22,0.50),(0.38,0.42,0.26,0.55),(0.62,0.38,0.28,0.58),(0.82,0.55,0.22,0.48)
+        ] : seed == 2 ? [
+            (0.18,0.68,0.24,0.48),(0.40,0.44,0.28,0.54),(0.64,0.36,0.26,0.56),(0.85,0.58,0.20,0.46)
+        ] : seed == 3 ? [
+            (0.12,0.62,0.20,0.46),(0.34,0.40,0.26,0.52),(0.58,0.34,0.28,0.56),(0.80,0.50,0.22,0.50)
+        ] : seed == 4 ? [
+            (0.16,0.66,0.22,0.50),(0.38,0.42,0.28,0.56),(0.64,0.36,0.26,0.54),(0.84,0.56,0.20,0.46)
+        ] : [
+            (0.14,0.64,0.22,0.48),(0.36,0.40,0.26,0.54),(0.60,0.36,0.28,0.56),(0.82,0.52,0.22,0.48)
+        ]
+        // configs: (xFrac, yFrac, rxFrac, ryFrac)
 
-        // Build smooth curve through top points using quadratic bezier
-        for i in stride(from: bumps.count - 1, through: 0, by: -1) {
-            let b = bumps[i]
-            let px = b.0 * w
-            let py = b.1 * h
-            let r  = b.2 * h
-            // Arc over each bump center
-            path.addArc(center: CGPoint(x: px, y: py + r * 0.1),
-                        radius: r,
-                        startAngle: .degrees(i == bumps.count - 1 ? -10 : -30),
-                        endAngle:   .degrees(i == 0 ? 190 : 210),
-                        clockwise: true)
+        for cfg in configs {
+            let cx = cfg.0 * w
+            let cy = cfg.1 * h
+            let rx = cfg.2 * w
+            let ry = cfg.3 * h
+            path.addEllipse(in: CGRect(x: cx-rx, y: cy-ry, width: rx*2, height: ry*2))
         }
-        path.addLine(to: CGPoint(x: 0, y: h))
-        path.closeSubpath()
+        // base rect to fill bottom
+        path.addRect(CGRect(x: 0, y: h*0.55, width: w, height: h*0.45))
         return path
     }
 }
