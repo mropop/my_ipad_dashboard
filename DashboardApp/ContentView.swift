@@ -820,19 +820,30 @@ struct WaveShape: Shape {
 
 // MARK: - Starfield Animation
 struct StarfieldView: View {
-    let stars = (0..<60).map { _ in Star() }
+    let stars = (0..<120).map { _ in Star() }  // more stars
     var body: some View {
         TimelineView(.animation) { tl in
             let now = tl.date.timeIntervalSince1970
             ZStack {
-                // Stars via Canvas
+                // Stars via Canvas — spread across full top 70%
                 Canvas { ctx, size in
                     for star in stars {
-                        let pulse = 0.4 + 0.6 * abs(sin(now * star.speed + star.offset))
-                        let rect = CGRect(x: star.x * size.width - star.size/2,
-                                          y: star.y * size.height * 0.6 - star.size/2,
-                                          width: star.size, height: star.size)
+                        let pulse = 0.3 + 0.7 * abs(sin(now * star.speed + star.offset))
+                        let rect = CGRect(
+                            x: star.x * size.width - star.size/2,
+                            y: star.y * size.height * 0.7 - star.size/2,
+                            width: star.size, height: star.size)
                         ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(pulse * star.opacity)))
+                        // Add cross sparkle for brighter stars
+                        if star.size > 2.5 {
+                            let cx = star.x * size.width
+                            let cy = star.y * size.height * 0.7
+                            let len = star.size * 2 * pulse
+                            var h = Path(); h.move(to: CGPoint(x: cx-len, y: cy)); h.addLine(to: CGPoint(x: cx+len, y: cy))
+                            var v = Path(); v.move(to: CGPoint(x: cx, y: cy-len)); v.addLine(to: CGPoint(x: cx, y: cy+len))
+                            ctx.stroke(h, with: .color(.white.opacity(pulse * 0.4)), lineWidth: 0.5)
+                            ctx.stroke(v, with: .color(.white.opacity(pulse * 0.4)), lineWidth: 0.5)
+                        }
                     }
                 }
                 // Moon — visible SwiftUI view
@@ -852,14 +863,21 @@ struct StarfieldView: View {
                             .frame(width: 44, height: 44)
                             .shadow(color: Color(hex: "aaccff").opacity(0.6), radius: 14)
                             .position(x: geo.size.width * 0.78, y: geo.size.height * 0.18)
+                        // Moon crater details
+                        Circle()
+                            .fill(Color(hex: "b0ccee").opacity(0.3))
+                            .frame(width: 10, height: 10)
+                            .position(x: geo.size.width * 0.78 + 8, y: geo.size.height * 0.18 - 6)
+                        Circle()
+                            .fill(Color(hex: "b0ccee").opacity(0.2))
+                            .frame(width: 6, height: 6)
+                            .position(x: geo.size.width * 0.78 - 8, y: geo.size.height * 0.18 + 5)
                         // Moon reflection on water
                         let shimmer = CGFloat(sin(now * 0.8) * 3)
                         Rectangle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color(hex: "c8e0ff").opacity(0.18), .clear],
-                                    startPoint: .top, endPoint: .bottom)
-                            )
+                            .fill(LinearGradient(
+                                colors: [Color(hex: "c8e0ff").opacity(0.18), .clear],
+                                startPoint: .top, endPoint: .bottom))
                             .frame(width: 6, height: 80)
                             .blur(radius: 3)
                             .offset(x: shimmer)
@@ -873,10 +891,10 @@ struct StarfieldView: View {
 
 struct Star {
     let x = Double.random(in: 0...1)
-    let y = Double.random(in: 0...0.6)
-    let size = Double.random(in: 1...3)
-    let opacity = Double.random(in: 0.3...0.8)
-    let speed = Double.random(in: 0.3...1.2)
+    let y = Double.random(in: 0...1)
+    let size = Double.random(in: 0.8...3.5)
+    let opacity = Double.random(in: 0.4...1.0)
+    let speed = Double.random(in: 0.3...1.5)
     let offset = Double.random(in: 0...6.28)
 }
 
@@ -902,20 +920,79 @@ struct FogView: View {
     }
 }
 
-// MARK: - Partly Cloudy Animation
+// MARK: - Cloud Shape (Smooth Bezier — natural organic)
+struct CloudShape: Shape {
+    let seed: Int
+
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        // Use seed to vary bump count and heights
+        let bumps: [(CGFloat, CGFloat, CGFloat, CGFloat)] = seed == 1 ? [
+            (0.10, 0.72, 0.38, 0.30), (0.25, 0.45, 0.42, 0.55),
+            (0.45, 0.30, 0.46, 0.65), (0.65, 0.40, 0.42, 0.55),
+            (0.82, 0.55, 0.36, 0.40), (0.93, 0.72, 0.28, 0.28)
+        ] : seed == 2 ? [
+            (0.08, 0.75, 0.34, 0.28), (0.24, 0.50, 0.40, 0.50),
+            (0.44, 0.32, 0.44, 0.62), (0.62, 0.28, 0.46, 0.68),
+            (0.80, 0.42, 0.38, 0.52), (0.94, 0.70, 0.26, 0.26)
+        ] : seed == 3 ? [
+            (0.12, 0.70, 0.36, 0.32), (0.28, 0.48, 0.42, 0.52),
+            (0.48, 0.35, 0.44, 0.60), (0.66, 0.38, 0.40, 0.56),
+            (0.82, 0.52, 0.34, 0.44), (0.94, 0.74, 0.24, 0.24)
+        ] : seed == 4 ? [
+            (0.10, 0.68, 0.38, 0.34), (0.27, 0.44, 0.44, 0.56),
+            (0.46, 0.28, 0.48, 0.68), (0.64, 0.35, 0.44, 0.60),
+            (0.80, 0.48, 0.36, 0.46), (0.92, 0.72, 0.26, 0.26)
+        ] : [
+            (0.11, 0.73, 0.36, 0.30), (0.26, 0.46, 0.42, 0.54),
+            (0.46, 0.33, 0.45, 0.62), (0.65, 0.36, 0.42, 0.58),
+            (0.81, 0.50, 0.35, 0.44), (0.93, 0.73, 0.25, 0.25)
+        ]
+        // bumps: (xFrac, yFrac, radiusFrac, controlHeight)
+
+        var path = Path()
+        path.move(to: CGPoint(x: 0, y: h))
+        path.addLine(to: CGPoint(x: w, y: h))
+
+        // Smooth bezier across top — right to left
+        var pts: [(CGFloat, CGFloat)] = []
+        for b in bumps {
+            pts.append((b.0 * w, b.1 * h))
+        }
+
+        // Build smooth curve through top points using quadratic bezier
+        for i in stride(from: bumps.count - 1, through: 0, by: -1) {
+            let b = bumps[i]
+            let px = b.0 * w
+            let py = b.1 * h
+            let r  = b.2 * h
+            // Arc over each bump center
+            path.addArc(center: CGPoint(x: px, y: py + r * 0.1),
+                        radius: r,
+                        startAngle: .degrees(i == bumps.count - 1 ? -10 : -30),
+                        endAngle:   .degrees(i == 0 ? 190 : 210),
+                        clockwise: true)
+        }
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.closeSubpath()
+        return path
+    }
+}
+
+
 struct PartlyCloudyView: View {
     var body: some View {
         TimelineView(.animation) { tl in
             let t = tl.date.timeIntervalSince1970
             GeometryReader { geo in
                 ZStack {
-                    // Yellow sun glow
+                    // Sun glow
                     Circle()
                         .fill(Color(hex: "ffdd44").opacity(0.25))
                         .frame(width: 130, height: 130)
                         .blur(radius: 28)
                         .position(x: geo.size.width * 0.72, y: geo.size.height * 0.2)
-                    // Yellow sun
+                    // Sun
                     Circle()
                         .fill(RadialGradient(
                             colors: [Color(hex: "ffffaa"), Color(hex: "ffee44"), Color(hex: "ffbb22")],
@@ -924,29 +1001,26 @@ struct PartlyCloudyView: View {
                         .shadow(color: Color(hex: "ffcc33").opacity(0.8), radius: 18)
                         .position(x: geo.size.width * 0.72, y: geo.size.height * 0.18)
 
-                    // Cloud 1 — big, slow, partially covers sun
-                    let c1x = CGFloat(sin(t * 0.04) * 60) + geo.size.width * 0.45
-                    RoundedRectangle(cornerRadius: 40)
-                        .fill(Color.white.opacity(0.18))
-                        .frame(width: 200, height: 55)
-                        .blur(radius: 6)
-                        .position(x: c1x, y: geo.size.height * 0.17)
+                    // Cloud 1 — big, drifts slowly rightward
+                    let c1x = geo.size.width * 0.38 + CGFloat(sin(t * 0.03) * 30 + t * 3).truncatingRemainder(dividingBy: geo.size.width + 200) - 100
+                    CloudShape(seed: 1)
+                        .fill(Color.white.opacity(0.22))
+                        .frame(width: 200, height: 60)
+                        .position(x: c1x, y: geo.size.height * 0.16)
 
-                    // Cloud 2 — medium
-                    let c2x = CGFloat(sin(t * 0.055 + 1.2) * 50) + geo.size.width * 0.6
-                    RoundedRectangle(cornerRadius: 35)
-                        .fill(Color.white.opacity(0.14))
-                        .frame(width: 150, height: 42)
-                        .blur(radius: 5)
-                        .position(x: c2x, y: geo.size.height * 0.26)
+                    // Cloud 2 — medium, faster
+                    let c2x = geo.size.width * 0.65 + CGFloat(sin(t * 0.04 + 1.5) * 20 + t * 5).truncatingRemainder(dividingBy: geo.size.width + 180) - 90
+                    CloudShape(seed: 2)
+                        .fill(Color.white.opacity(0.16))
+                        .frame(width: 150, height: 45)
+                        .position(x: c2x, y: geo.size.height * 0.27)
 
-                    // Cloud 3 — small
-                    let c3x = CGFloat(sin(t * 0.035 + 2.5) * 40) + geo.size.width * 0.3
-                    RoundedRectangle(cornerRadius: 28)
-                        .fill(Color.white.opacity(0.11))
-                        .frame(width: 110, height: 32)
-                        .blur(radius: 4)
-                        .position(x: c3x, y: geo.size.height * 0.12)
+                    // Cloud 3 — small, different speed
+                    let c3x = geo.size.width * 0.2 + CGFloat(sin(t * 0.025 + 3.0) * 25 + t * 4).truncatingRemainder(dividingBy: geo.size.width + 150) - 75
+                    CloudShape(seed: 3)
+                        .fill(Color.white.opacity(0.13))
+                        .frame(width: 120, height: 36)
+                        .position(x: c3x, y: geo.size.height * 0.1)
                 }
             }
         }
@@ -960,43 +1034,36 @@ struct CloudyView: View {
             let t = tl.date.timeIntervalSince1970
             GeometryReader { geo in
                 ZStack {
-                    // Large background cloud layer
-                    let bg1x = CGFloat(sin(t * 0.03) * 50) + geo.size.width * 0.4
-                    RoundedRectangle(cornerRadius: 50)
-                        .fill(Color.white.opacity(0.09))
-                        .frame(width: 280, height: 70)
-                        .blur(radius: 8)
-                        .position(x: bg1x, y: geo.size.height * 0.12)
+                    // 5 clouds at different heights/speeds, continuously drifting
+                    let c1x = CGFloat(t * 2.5).truncatingRemainder(dividingBy: geo.size.width + 260) - 130
+                    CloudShape(seed: 1)
+                        .fill(Color.white.opacity(0.14))
+                        .frame(width: 240, height: 70)
+                        .position(x: c1x, y: geo.size.height * 0.1)
 
-                    let bg2x = CGFloat(sin(t * 0.025 + 2.0) * 60) + geo.size.width * 0.65
-                    RoundedRectangle(cornerRadius: 45)
-                        .fill(Color.white.opacity(0.07))
-                        .frame(width: 240, height: 60)
-                        .blur(radius: 7)
-                        .position(x: bg2x, y: geo.size.height * 0.22)
-
-                    // Mid clouds
-                    let m1x = CGFloat(sin(t * 0.04 + 1.0) * 70) + geo.size.width * 0.3
-                    RoundedRectangle(cornerRadius: 40)
+                    let c2x = CGFloat(t * 1.8 + 200).truncatingRemainder(dividingBy: geo.size.width + 220) - 110
+                    CloudShape(seed: 2)
                         .fill(Color.white.opacity(0.11))
-                        .frame(width: 200, height: 52)
-                        .blur(radius: 6)
-                        .position(x: m1x, y: geo.size.height * 0.18)
+                        .frame(width: 190, height: 58)
+                        .position(x: c2x, y: geo.size.height * 0.2)
 
-                    let m2x = CGFloat(sin(t * 0.035 + 3.0) * 55) + geo.size.width * 0.7
-                    RoundedRectangle(cornerRadius: 35)
+                    let c3x = CGFloat(t * 3.2 + 400).truncatingRemainder(dividingBy: geo.size.width + 200) - 100
+                    CloudShape(seed: 3)
+                        .fill(Color.white.opacity(0.13))
+                        .frame(width: 160, height: 50)
+                        .position(x: c3x, y: geo.size.height * 0.06)
+
+                    let c4x = CGFloat(t * 2.0 + 600).truncatingRemainder(dividingBy: geo.size.width + 180) - 90
+                    CloudShape(seed: 4)
                         .fill(Color.white.opacity(0.09))
-                        .frame(width: 170, height: 45)
-                        .blur(radius: 5)
-                        .position(x: m2x, y: geo.size.height * 0.08)
+                        .frame(width: 210, height: 62)
+                        .position(x: c4x, y: geo.size.height * 0.3)
 
-                    // Small foreground cloud
-                    let s1x = CGFloat(sin(t * 0.05 + 0.5) * 45) + geo.size.width * 0.5
-                    RoundedRectangle(cornerRadius: 28)
-                        .fill(Color.white.opacity(0.08))
-                        .frame(width: 130, height: 36)
-                        .blur(radius: 4)
-                        .position(x: s1x, y: geo.size.height * 0.3)
+                    let c5x = CGFloat(t * 1.5 + 100).truncatingRemainder(dividingBy: geo.size.width + 160) - 80
+                    CloudShape(seed: 5)
+                        .fill(Color.white.opacity(0.10))
+                        .frame(width: 140, height: 44)
+                        .position(x: c5x, y: geo.size.height * 0.16)
                 }
             }
         }
