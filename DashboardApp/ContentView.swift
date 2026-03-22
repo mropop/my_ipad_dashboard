@@ -116,9 +116,9 @@ struct WeatherTheme {
         case 3: // Overcast
             return WeatherTheme(
                 condition: .cloudy,
-                bgTop: Color(hex: "080c12"), bgBottom: Color(hex: "101820"),
-                accent: Color(hex: "8899bb"), accent2: Color(hex: "667799"),
-                textColor: Color(hex: "c8d8e8"), panelBorder: Color(hex: "8899bb").opacity(0.15),
+                bgTop: Color(hex: "1a2030"), bgBottom: Color(hex: "2a3548"),
+                accent: Color(hex: "aabbcc"), accent2: Color(hex: "8899aa"),
+                textColor: Color(hex: "d8e8f0"), panelBorder: Color(hex: "aabbcc").opacity(0.22),
                 label: "OVERCAST")
         case 45, 48: // Fog
             return WeatherTheme(
@@ -164,11 +164,11 @@ class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
     @Published var theme: WeatherTheme = WeatherTheme.from(code: 0, hour: Calendar.current.component(.hour, from: Date()))
     @Published var weatherCode: Int = 0
-    @Published var manualTheme: String? = nil  // nil = auto
+    @Published var manualTheme: String? = nil
     var sunsetHour: Int = 18
+    var lastTemp: Double = 25
 
-    // All available manual themes
-    static let manualOptions: [(String, String)] = [  // (id, label)
+    static let manualOptions: [(String, String)] = [
         ("clearDay",     "☀️ Clear"),
         ("partlyCloudy", "🌤 Partly"),
         ("clearNight",   "🌙 Night"),
@@ -179,13 +179,28 @@ class ThemeManager: ObservableObject {
         ("cold",         "🥶 Cold"),
     ]
 
-    func update(code: Int, temp: Double = 20) {
+    func update(code: Int, temp: Double? = nil) {
         weatherCode = code
-        guard manualTheme == nil else { return }  // skip if manual override
+        if let t = temp { lastTemp = t }
+        guard manualTheme == nil else { return }
+        applyAutoTheme()
+    }
+
+    // Called every minute by clock — just re-check hour vs sunsetHour
+    func refreshHour() {
+        guard manualTheme == nil else { return }
+        applyAutoTheme()
+    }
+
+    private func applyAutoTheme() {
         let hour = Calendar.current.component(.hour, from: Date())
         DispatchQueue.main.async {
             withAnimation(.easeInOut(duration: 2.0)) {
-                self.theme = WeatherTheme.from(code: code, hour: hour, temp: temp, sunsetHour: self.sunsetHour)
+                self.theme = WeatherTheme.from(
+                    code: self.weatherCode,
+                    hour: hour,
+                    temp: self.lastTemp,
+                    sunsetHour: self.sunsetHour)
             }
         }
     }
@@ -199,8 +214,7 @@ class ThemeManager: ObservableObject {
                 }
             }
         } else {
-            // Revert to auto
-            update(code: weatherCode)
+            applyAutoTheme()
         }
     }
 }
@@ -732,42 +746,38 @@ struct SnowFlake {
 // MARK: - Ocean Wave Animation
 struct OceanWaveView: View {
     let color: Color
-    @State private var phase: Double = 0
-    @State private var sunBob: CGFloat = 0
-    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .bottom) {
-                // Yellow sun glow
-                Circle()
-                    .fill(Color(hex: "ffdd44").opacity(0.2))
-                    .frame(width: 120, height: 120)
-                    .blur(radius: 35)
-                    .position(x: geo.size.width * 0.8, y: geo.size.height * 0.18 + sunBob)
-
-                // Yellow sun
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [Color(hex: "ffffaa"), Color(hex: "ffee44"), Color(hex: "ffbb22")],
-                        center: .center, startRadius: 0, endRadius: 26))
-                    .frame(width: 50, height: 50)
-                    .shadow(color: Color(hex: "ffcc33").opacity(0.8), radius: 20)
-                    .position(x: geo.size.width * 0.8, y: geo.size.height * 0.16 + sunBob)
-
-                // Waves
-                WaveShape(phase: phase, amplitude: 8, frequency: 1.2)
-                    .fill(color.opacity(0.15))
-                    .frame(height: 60)
-                WaveShape(phase: phase + 1.5, amplitude: 6, frequency: 0.9)
-                    .fill(color.opacity(0.1))
-                    .frame(height: 50)
+        TimelineView(.animation) { tl in
+            let t = tl.date.timeIntervalSince1970
+            let phase = t * 0.8
+            let sunBob = CGFloat(sin(t * 0.6) * 5)
+            GeometryReader { geo in
+                ZStack(alignment: .bottom) {
+                    // Yellow sun glow
+                    Circle()
+                        .fill(Color(hex: "ffdd44").opacity(0.2))
+                        .frame(width: 120, height: 120)
+                        .blur(radius: 35)
+                        .position(x: geo.size.width * 0.8, y: geo.size.height * 0.18 + sunBob)
+                    // Yellow sun
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [Color(hex: "ffffaa"), Color(hex: "ffee44"), Color(hex: "ffbb22")],
+                            center: .center, startRadius: 0, endRadius: 26))
+                        .frame(width: 50, height: 50)
+                        .shadow(color: Color(hex: "ffcc33").opacity(0.8), radius: 20)
+                        .position(x: geo.size.width * 0.8, y: geo.size.height * 0.16 + sunBob)
+                    // Waves
+                    WaveShape(phase: phase, amplitude: 8, frequency: 1.2)
+                        .fill(color.opacity(0.15))
+                        .frame(height: 60)
+                    WaveShape(phase: phase + 1.5, amplitude: 6, frequency: 0.9)
+                        .fill(color.opacity(0.1))
+                        .frame(height: 50)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        }
-        .onReceive(timer) { _ in
-            phase += 0.04
-            sunBob = CGFloat(sin(phase * 0.3) * 5)
         }
     }
 }
@@ -819,90 +829,81 @@ struct Star {
 
 // MARK: - Fog Animation
 struct FogView: View {
-    @State private var offset: CGFloat = 0
-    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                ForEach(0..<3, id: \.self) { i in
-                    Ellipse()
-                        .fill(Color.white.opacity(0.03))
-                        .frame(width: geo.size.width * 1.4, height: 120)
-                        .offset(x: offset + CGFloat(i) * 60 - 100,
-                                y: geo.size.height * 0.3 + CGFloat(i) * 60)
-                        .blur(radius: 30)
+        TimelineView(.animation) { tl in
+            let t = tl.date.timeIntervalSince1970
+            GeometryReader { geo in
+                ZStack {
+                    ForEach(0..<3, id: \.self) { i in
+                        let offset = CGFloat(sin(t * 0.08 + Double(i) * 1.2) * 60)
+                        Ellipse()
+                            .fill(Color.white.opacity(0.03))
+                            .frame(width: geo.size.width * 1.4, height: 120)
+                            .offset(x: offset + CGFloat(i) * 60 - 100,
+                                    y: geo.size.height * 0.3 + CGFloat(i) * 60)
+                            .blur(radius: 30)
+                    }
                 }
             }
-        }
-        .onReceive(timer) { _ in
-            offset += 0.3
-            if offset > 200 { offset = 0 }
         }
     }
 }
 
 // MARK: - Partly Cloudy Animation
 struct PartlyCloudyView: View {
-    @State private var offset: CGFloat = 0
-    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
-
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                // Yellow sun glow
-                Circle()
-                    .fill(Color(hex: "ffdd44").opacity(0.15))
-                    .frame(width: 110, height: 110)
-                    .blur(radius: 32)
-                    .position(x: geo.size.width * 0.75, y: geo.size.height * 0.2)
-
-                // Yellow sun
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [Color(hex: "fffaaa"), Color(hex: "ffdd44"), Color(hex: "ffaa22")],
-                        center: .center, startRadius: 0, endRadius: 20))
-                    .frame(width: 38, height: 38)
-                    .shadow(color: Color(hex: "ffcc33").opacity(0.7), radius: 16)
-                    .position(x: geo.size.width * 0.75, y: geo.size.height * 0.18)
-
-                // Moving clouds covering sun partially
-                ForEach(0..<4, id: \.self) { i in
-                    Ellipse()
-                        .fill(Color.white.opacity(0.05 + Double(i) * 0.01))
-                        .frame(width: CGFloat(160 + i * 50), height: 45)
-                        .offset(x: offset * (i % 2 == 0 ? 1 : -0.6) + CGFloat(i * 60 - 80),
-                                y: geo.size.height * 0.12 + CGFloat(i * 30))
-                        .blur(radius: 14)
+        TimelineView(.animation) { tl in
+            let t = tl.date.timeIntervalSince1970
+            GeometryReader { geo in
+                ZStack {
+                    // Yellow sun glow
+                    Circle()
+                        .fill(Color(hex: "ffdd44").opacity(0.15))
+                        .frame(width: 110, height: 110)
+                        .blur(radius: 32)
+                        .position(x: geo.size.width * 0.75, y: geo.size.height * 0.2)
+                    // Yellow sun
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [Color(hex: "fffaaa"), Color(hex: "ffdd44"), Color(hex: "ffaa22")],
+                            center: .center, startRadius: 0, endRadius: 20))
+                        .frame(width: 38, height: 38)
+                        .shadow(color: Color(hex: "ffcc33").opacity(0.7), radius: 16)
+                        .position(x: geo.size.width * 0.75, y: geo.size.height * 0.18)
+                    // Moving clouds
+                    ForEach(0..<4, id: \.self) { i in
+                        let spd = 0.06 + Double(i) * 0.02
+                        let offset = CGFloat(sin(t * spd + Double(i) * 1.5) * 40) + CGFloat(i * 30 - 40)
+                        Ellipse()
+                            .fill(Color.white.opacity(0.05 + Double(i) * 0.01))
+                            .frame(width: CGFloat(160 + i * 50), height: 45)
+                            .offset(x: offset, y: geo.size.height * 0.12 + CGFloat(i * 30))
+                            .blur(radius: 14)
+                    }
                 }
             }
-        }
-        .onReceive(timer) { _ in
-            offset += 0.18
-            if offset > 200 { offset = 0 }
         }
     }
 }
 
 // MARK: - Cloudy Animation
 struct CloudyView: View {
-    @State private var offset: CGFloat = 0
-    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                ForEach(0..<4, id: \.self) { i in
-                    Ellipse()
-                        .fill(Color.white.opacity(0.025))
-                        .frame(width: CGFloat(180 + i * 40), height: 60)
-                        .offset(x: offset * (i % 2 == 0 ? 1 : -1) + CGFloat(i * 80 - 100),
-                                y: geo.size.height * 0.15 + CGFloat(i * 35))
-                        .blur(radius: 20)
+        TimelineView(.animation) { tl in
+            let t = tl.date.timeIntervalSince1970
+            GeometryReader { geo in
+                ZStack {
+                    ForEach(0..<4, id: \.self) { i in
+                        let dir: Double = i % 2 == 0 ? 1 : -1
+                        let offset = CGFloat(sin(t * 0.05 * dir + Double(i)) * 80) + CGFloat(i * 80 - 100)
+                        Ellipse()
+                            .fill(Color.white.opacity(0.025))
+                            .frame(width: CGFloat(180 + i * 40), height: 60)
+                            .offset(x: offset, y: geo.size.height * 0.15 + CGFloat(i * 35))
+                            .blur(radius: 20)
+                    }
                 }
             }
-        }
-        .onReceive(timer) { _ in
-            offset += 0.15
-            if offset > 300 { offset = 0 }
         }
     }
 }
@@ -982,9 +983,8 @@ struct ClockView: View {
         .onReceive(timer) { t in
             now = t
             colonOn = Calendar.current.component(.second, from: t) % 2 == 0
-            // Refresh theme every minute — catches sunset transition
             if Calendar.current.component(.second, from: t) == 0 {
-                ThemeManager.shared.update(code: ThemeManager.shared.weatherCode)
+                ThemeManager.shared.refreshHour()
             }
         }
     }
