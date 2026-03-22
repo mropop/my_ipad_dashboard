@@ -663,12 +663,13 @@ struct WeatherBackgroundView: View {
 struct RainView: View {
     let drops = (0..<80).map { _ in RainDrop() }
     var body: some View {
-        TimelineView(.animation) { _ in
+        TimelineView(.animation) { tl in
+            let now = tl.date.timeIntervalSince1970
             Canvas { ctx, size in
                 for drop in drops {
-                    let progress = (Date().timeIntervalSince1970.truncatingRemainder(dividingBy: drop.duration)) / drop.duration
+                    let t = (now + drop.offset).truncatingRemainder(dividingBy: drop.duration) / drop.duration
                     let x = drop.x * size.width
-                    let y = progress * (size.height + 40) - 20
+                    let y = t * (size.height + 40) - 20
                     var path = Path()
                     path.move(to: CGPoint(x: x, y: y))
                     path.addLine(to: CGPoint(x: x - 1, y: y + drop.length))
@@ -685,6 +686,7 @@ struct RainDrop {
     let duration = Double.random(in: 0.4...1.0)
     let opacity = Double.random(in: 0.15...0.45)
     let width = Double.random(in: 0.5...1.5)
+    let offset = Double.random(in: 0...3.0)  // stagger start
 }
 
 // MARK: - Storm Animation
@@ -718,12 +720,12 @@ struct StormView: View {
 struct SnowView: View {
     let flakes = (0..<50).map { _ in SnowFlake() }
     var body: some View {
-        TimelineView(.animation) { _ in
+        TimelineView(.animation) { tl in
+            let now = tl.date.timeIntervalSince1970
             Canvas { ctx, size in
                 for flake in flakes {
-                    let t = Date().timeIntervalSince1970
-                    let progress = (t.truncatingRemainder(dividingBy: flake.duration)) / flake.duration
-                    let drift = sin(t * flake.driftSpeed + flake.driftOffset) * 20
+                    let progress = ((now + flake.driftOffset).truncatingRemainder(dividingBy: flake.duration)) / flake.duration
+                    let drift = sin(now * flake.driftSpeed + flake.driftOffset) * 20
                     let x = flake.x * size.width + drift
                     let y = progress * (size.height + 20) - 10
                     let rect = CGRect(x: x - flake.size/2, y: y - flake.size/2, width: flake.size, height: flake.size)
@@ -805,9 +807,10 @@ struct StarfieldView: View {
     let stars = (0..<60).map { _ in Star() }
     var body: some View {
         TimelineView(.animation) { tl in
+            let now = tl.date.timeIntervalSince1970
             Canvas { ctx, size in
                 for star in stars {
-                    let pulse = 0.4 + 0.6 * abs(sin(tl.date.timeIntervalSince1970 * star.speed + star.offset))
+                    let pulse = 0.4 + 0.6 * abs(sin(now * star.speed + star.offset))
                     let rect = CGRect(x: star.x * size.width - star.size/2,
                                       y: star.y * size.height - star.size/2,
                                       width: star.size, height: star.size)
