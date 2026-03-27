@@ -166,6 +166,7 @@ class ThemeManager: ObservableObject {
     @Published var weatherCode: Int = 0
     @Published var manualTheme: String? = nil
     var sunsetHour: Int = 18
+    var sunsetMinute: Int = 0
     var lastTemp: Double = 25
 
     static let manualOptions: [(String, String, String)] = [  // (id, emoji, name)
@@ -193,12 +194,18 @@ class ThemeManager: ObservableObject {
     }
 
     private func applyAutoTheme() {
-        let hour = Calendar.current.component(.hour, from: Date())
+        let cal = Calendar.current
+        let now = Date()
+        let hour   = cal.component(.hour,   from: now)
+        let minute = cal.component(.minute, from: now)
+        let totalMinutes  = hour * 60 + minute
+        let sunsetTotal   = sunsetHour * 60 + sunsetMinute
+        let isNight = totalMinutes >= sunsetTotal || hour < 6
         DispatchQueue.main.async {
             withAnimation(.easeInOut(duration: 2.0)) {
                 self.theme = WeatherTheme.from(
                     code: self.weatherCode,
-                    hour: hour,
+                    hour: isNight ? 23 : 10,
                     temp: self.lastTemp,
                     sunsetHour: self.sunsetHour)
             }
@@ -226,6 +233,9 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var city: String = ""
     private var locationManager = CLLocationManager()
     private var fetchTimer: Timer?
+    private var lastLat: Double = 0
+    private var lastLon: Double = 0
+    private var locationFixed = false  // once we have location, never ask again
 
     override init() {
         super.init()
@@ -237,7 +247,9 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
         switch status {
         case .authorizedWhenInUse, .authorizedAlways:
-            locationManager.startUpdatingLocation()
+            guard !locationFixed else { return }
+            // requestLocation() fires once then stops automatically — no continuous GPS drain
+            locationManager.requestLocation()
         case .denied, .restricted:
             self.status = "Location denied"
         default: break
@@ -245,14 +257,23 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let loc = locations.last else { return }
-        locationManager.stopUpdatingLocation()
-        fetchWeather(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
+        guard let loc = locations.last, !locationFixed else { return }
+        // Lock location forever — never request GPS again
+        locationFixed = true
+        lastLat = loc.coordinate.latitude
+        lastLon = loc.coordinate.longitude
+
+        // First weather fetch
+        fetchWeather(lat: lastLat, lon: lastLon)
+
+        // Refresh weather every 30 min using stored coords — no GPS needed
         fetchTimer?.invalidate()
         fetchTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
-            self?.fetchWeather(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
+            guard let self = self else { return }
+            self.fetchWeather(lat: self.lastLat, lon: self.lastLon)
         }
-        // Reverse geocode for city name
+
+        // Reverse geocode city name once
         CLGeocoder().reverseGeocodeLocation(loc) { [weak self] placemarks, _ in
             guard let self = self else { return }
             let name = placemarks?.first?.locality
@@ -264,6 +285,11 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 self.weather?.city = name  // also update in struct
             }
         }
+    }
+
+    // Required when using requestLocation()
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        DispatchQueue.main.async { self.status = "Location error" }
     }
 
     func fetchWeather(lat: Double, lon: Double) {
@@ -302,21 +328,25 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 }
             }
 
-            // Parse sunset hour for today
+            // Parse sunset hour+minute for today
             var sunsetHour = 18
+            var sunsetMinute = 0
             if let daily = json["daily"] as? [String: Any],
                let sunsets = daily["sunset"] as? [String],
                let first = sunsets.first {
-                // Format: "2026-03-20T18:15" — extract hour
+                // Format: "2026-03-20T18:15" — extract hour and minute
                 let parts = first.split(separator: "T")
                 if parts.count == 2 {
                     let timePart = String(parts[1])
-                    if let h = Int(timePart.prefix(2)) {
+                    let hm = timePart.split(separator: ":")
+                    if hm.count >= 2, let h = Int(hm[0]), let m = Int(hm[1]) {
                         sunsetHour = h
+                        sunsetMinute = m
                     }
                 }
             }
             ThemeManager.shared.sunsetHour = sunsetHour
+            ThemeManager.shared.sunsetMinute = sunsetMinute
 
             DispatchQueue.main.async {
                 self.weather = WeatherData(
@@ -663,9 +693,9 @@ struct WeatherBackgroundView: View {
 
 // MARK: - Rain Animation
 struct RainView: View {
-    let drops = (0..<50).map { _ in RainDrop() }
+    let drops = (0..<40).map { _ in RainDrop() }
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0/24.0)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.0/15.0)) { tl in
             let now = tl.date.timeIntervalSince1970
             Canvas { ctx, size in
                 for drop in drops {
@@ -684,11 +714,11 @@ struct RainView: View {
 
 struct RainDrop {
     let x = Double.random(in: 0...1)
-    let length = Double.random(in: 12...28)
-    let duration = Double.random(in: 0.4...1.0)
-    let opacity = Double.random(in: 0.15...0.45)
-    let width = Double.random(in: 0.5...1.5)
-    let offset = Double.random(in: 0...3.0)  // stagger start
+    let length = Double.random(in: 8...16)        // shorter drops
+    let duration = Double.random(in: 1.2...2.5)   // slower fall
+    let opacity = Double.random(in: 0.10...0.30)  // dimmer
+    let width = Double.random(in: 0.5...1.0)
+    let offset = Double.random(in: 0...3.0)
 }
 
 // MARK: - Storm Animation
@@ -722,7 +752,7 @@ struct StormView: View {
 struct SnowView: View {
     let flakes = (0..<35).map { _ in SnowFlake() }
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0/20.0)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.0/12.0)) { tl in
             let now = tl.date.timeIntervalSince1970
             ZStack {
                 // Snowflakes via Canvas
@@ -768,7 +798,7 @@ struct OceanWaveView: View {
     let color: Color
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0/20.0)) { tl in
+        TimelineView(.periodic(from: .now, by: 1.0/12.0)) { tl in
             let t = tl.date.timeIntervalSince1970
             let phase = t * 0.8
             let sunBob = CGFloat(sin(t * 0.6) * 5)
