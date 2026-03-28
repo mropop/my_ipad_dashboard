@@ -116,9 +116,9 @@ struct WeatherTheme {
         case 3: // Overcast
             return WeatherTheme(
                 condition: .cloudy,
-                bgTop: Color(hex: "1a2030"), bgBottom: Color(hex: "2a3548"),
-                accent: Color(hex: "aabbcc"), accent2: Color(hex: "8899aa"),
-                textColor: Color(hex: "d8e8f0"), panelBorder: Color(hex: "aabbcc").opacity(0.22),
+                bgTop: Color(hex: "14283c"), bgBottom: Color(hex: "1e4464"),
+                accent: Color(hex: "6ab4d8"), accent2: Color(hex: "4488b0"),
+                textColor: Color(hex: "b0d8f0"), panelBorder: Color(hex: "6ab4d8").opacity(0.26),
                 label: "OVERCAST")
         case 45, 48: // Fog
             return WeatherTheme(
