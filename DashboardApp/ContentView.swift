@@ -293,53 +293,68 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func fetchWeather(lat: Double, lon: Double) {
-        // Open-Meteo — current + 5 day forecast + feels like + humidity + wind
-        let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)" +
-            "&current=temperature_2m,apparent_temperature,weathercode,windspeed_10m,relativehumidity_2m" +
-            "&daily=weathercode,temperature_2m_max,temperature_2m_min,sunset" +
-            "&temperature_unit=celsius&windspeed_unit=kmh&forecast_days=6&timezone=auto"
+        // wttr.in — no API key required, HTTPS, JSON format j1
+        let urlStr = "https://wttr.in/\(lat),\(lon)?format=j1"
         guard let url = URL(string: urlStr) else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, err in
             guard let self = self, let data = data, err == nil else { return }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let current = json["current"] as? [String: Any],
-                  let temp = current["temperature_2m"] as? Double,
-                  let feels = current["apparent_temperature"] as? Double,
-                  let humidity = current["relativehumidity_2m"] as? Int,
-                  let wind = current["windspeed_10m"] as? Double,
-                  let code = current["weathercode"] as? Int else { return }
+                  let currentArr = json["current_condition"] as? [[String: Any]],
+                  let current = currentArr.first else { return }
+
+            // Current conditions
+            let tempStr   = (current["temp_C"] as? String) ?? "0"
+            let feelsStr  = (current["FeelsLikeC"] as? String) ?? "0"
+            let humStr    = (current["humidity"] as? String) ?? "0"
+            let windStr   = (current["windspeedKmph"] as? String) ?? "0"
+            let wCodeStr  = (current["weatherCode"] as? String) ?? "113"
+            let temp      = Double(tempStr) ?? 0
+            let feels     = Double(feelsStr) ?? 0
+            let humidity  = Int(humStr) ?? 0
+            let wind      = Double(windStr) ?? 0
+            let rawCode   = Int(wCodeStr) ?? 113
+            let code      = Self.wttrToWMO(rawCode)
             let (desc, icon) = Self.weatherInfo(code: code)
 
-            // Parse 5-day forecast (skip today = index 0)
+            // 3-day forecast (weather array)
             var forecast: [DayForecast] = []
-            if let daily = json["daily"] as? [String: Any],
-               let dates = daily["time"] as? [String],
-               let codes = daily["weathercode"] as? [Int],
-               let highs = daily["temperature_2m_max"] as? [Double],
-               let lows = daily["temperature_2m_min"] as? [Double] {
-                let df = DateFormatter()
-                df.dateFormat = "yyyy-MM-dd"
-                let df2 = DateFormatter()
-                df2.dateFormat = "EEE"
-                for i in 1..<min(6, dates.count) {
-                    let dayLabel = df.date(from: dates[i]).flatMap { df2.string(from: $0) } ?? "Day \(i)"
-                    let (_, ic) = Self.weatherInfo(code: codes[i])
-                    forecast.append(DayForecast(id: i, date: dayLabel.uppercased(), high: highs[i], low: lows[i], icon: ic))
+            if let weather = json["weather"] as? [[String: Any]] {
+                let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+                let df2 = DateFormatter(); df2.dateFormat = "EEE"
+                // Skip index 0 (today), take up to 5 days
+                for i in 1..<min(6, weather.count + 1) {
+                    guard i < weather.count else { break }
+                    let day = weather[i]
+                    let dateStr = (day["date"] as? String) ?? ""
+                    let dayLabel = df.date(from: dateStr).flatMap { df2.string(from: $0) } ?? "Day \(i)"
+                    let high = Double((day["maxtempC"] as? String) ?? "0") ?? 0
+                    let low  = Double((day["mintempC"] as? String) ?? "0") ?? 0
+                    // Hourly midday code
+                    var dayCode = 113
+                    if let hourly = day["hourly"] as? [[String: Any]], hourly.count > 3,
+                       let hc = hourly[3]["weatherCode"] as? String {
+                        dayCode = Int(hc) ?? 113
+                    }
+                    let (_, ic) = Self.weatherInfo(code: Self.wttrToWMO(dayCode))
+                    forecast.append(DayForecast(id: i, date: dayLabel.uppercased(), high: high, low: low, icon: ic))
                 }
             }
 
-            // Parse sunset hour+minute for today
+            // Sunset — from astronomy array
             var sunsetHour = 18
             var sunsetMinute = 0
-            if let daily = json["daily"] as? [String: Any],
-               let sunsets = daily["sunset"] as? [String],
-               let first = sunsets.first {
-                // Format: "2026-03-20T18:15" — extract hour and minute
-                let parts = first.split(separator: "T")
+            if let weather = json["weather"] as? [[String: Any]],
+               let today = weather.first,
+               let astronomy = today["astronomy"] as? [[String: Any]],
+               let astro = astronomy.first,
+               let sunsetStr = astro["sunset"] as? String {
+                // Format: "6:45 PM"
+                let parts = sunsetStr.split(separator: " ")
                 if parts.count == 2 {
-                    let timePart = String(parts[1])
-                    let hm = timePart.split(separator: ":")
-                    if hm.count >= 2, let h = Int(hm[0]), let m = Int(hm[1]) {
+                    let timeParts = parts[0].split(separator: ":")
+                    if timeParts.count == 2, var h = Int(timeParts[0]), let m = Int(timeParts[1]) {
+                        if parts[1] == "PM" && h != 12 { h += 12 }
+                        if parts[1] == "AM" && h == 12 { h = 0 }
                         sunsetHour = h
                         sunsetMinute = m
                     }
@@ -358,6 +373,33 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                 ThemeManager.shared.update(code: code, temp: temp)
             }
         }.resume()
+    }
+
+    // Convert wttr.in/WorldWeatherOnline codes → WMO codes used by our theme system
+    static func wttrToWMO(_ code: Int) -> Int {
+        switch code {
+        case 113:           return 0   // Clear/Sunny
+        case 116:           return 2   // Partly Cloudy
+        case 119:           return 3   // Cloudy
+        case 122:           return 3   // Overcast
+        case 143, 248, 260: return 45  // Fog/Mist
+        case 176, 293, 296: return 61  // Light Rain
+        case 299, 302:      return 63  // Moderate Rain
+        case 305, 308:      return 65  // Heavy Rain
+        case 311, 314:      return 66  // Freezing Rain
+        case 263, 266:      return 51  // Drizzle
+        case 281, 284:      return 56  // Freezing Drizzle
+        case 317, 320:      return 80  // Rain Showers
+        case 323, 326:      return 71  // Light Snow
+        case 329, 332:      return 73  // Moderate Snow
+        case 335, 338:      return 75  // Heavy Snow
+        case 350, 377, 395: return 77  // Snow Grains/Ice
+        case 356, 359:      return 82  // Heavy Showers
+        case 362, 365, 374: return 85  // Snow Showers
+        case 386, 389:      return 95  // Thunderstorm
+        case 392, 395:      return 96  // Thunderstorm with hail
+        default:            return 3   // Default cloudy
+        }
     }
 
     static func weatherInfo(code: Int) -> (String, String) {
